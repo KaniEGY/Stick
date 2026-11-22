@@ -67,6 +67,7 @@ const GITHUB_REPO: &str = "KaniEGY/Stick";
 const YOUTUBE_CHANNEL_URL: &str = "https://www.youtube.com/@%D8%A7%D8%A8%D9%84%D9%83%D8%A7%D8%B4-%D8%A7%D9%86%D9%85%D9%8A%D8%B4%D9%86";
 const INSTAGRAM_URL: &str = "https://www.instagram.com/ablikash?exln=NmFtNWZidnBvb3k1";
 const SUPPORT_URL: &str = "https://ipn.eg/S/imhady/instapay/0tZZ7c";
+const SUPPORTERS: [(&str, &str, u32); 1] = [("Hazem", "حازم", 2)];
 
 #[derive(Clone, Copy, PartialEq)]
 enum WorkspaceMode {
@@ -4777,6 +4778,95 @@ impl StickApp {
         }
     }
 
+    fn render_support_dialog(&mut self, ctx: &egui::Context, lang: AppLang) {
+        if !self.show_support_dialog { return; }
+
+        let mut open = true;
+        let mut close_clicked = false;
+        egui::Window::new(tr(lang, "Supporters", "المتبرعين لدعم البرنامج"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .fixed_size(egui::vec2(525.0, 245.0))
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("♥")
+                            .size(24.0)
+                            .color(egui::Color32::from_rgb(214, 87, 255)),
+                    );
+                    ui.heading(tr(lang, "Supporters of Stick", "المتبرعين لدعم البرنامج"));
+                });
+                ui.separator();
+                ui.add_space(8.0);
+
+                for (en_name, ar_name, amount) in SUPPORTERS {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgb(70, 44, 112))
+                        .rounding(9.0)
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("👑")
+                                        .size(19.0)
+                                        .color(egui::Color32::from_rgb(255, 206, 53)),
+                                );
+                                ui.label(
+                                    egui::RichText::new(tr(lang, en_name, ar_name))
+                                        .size(20.0)
+                                        .strong()
+                                        .color(egui::Color32::WHITE),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(tr(
+                                                lang,
+                                                &format!("{amount} EGP"),
+                                                &format!("{amount} جنيه"),
+                                            ))
+                                            .size(17.0)
+                                            .strong()
+                                            .color(egui::Color32::from_rgb(255, 221, 92)),
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                }
+
+                ui.add_space(16.0);
+                let donate_label = format!("💜  {}", tr(lang, "Donate now", "تبرع الآن"));
+                if ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(donate_label)
+                            .size(18.0)
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    )
+                    .min_size(egui::vec2(485.0, 46.0))
+                    .fill(egui::Color32::from_rgb(120, 74, 210))
+                ).clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab(SUPPORT_URL));
+                }
+                ui.add_space(4.0);
+                ui.small(tr(
+                    lang,
+                    "Opens the official InstaPay donation page.",
+                    "بيفتح نافذة التبرع الرسمية على إنستا باي.",
+                ));
+                ui.add_space(5.0);
+                if ui.button(tr(lang, "Close", "إغلاق")).clicked() {
+                    close_clicked = true;
+                }
+            });
+
+        self.show_support_dialog = open && !close_clicked;
+    }
+
     fn render_feedback_dialog(&mut self, ctx: &egui::Context) {
         if !self.show_feedback_dialog { return; }
         let lang = self.config.lang;
@@ -5834,13 +5924,46 @@ impl eframe::App for StickApp {
                         // Merely viewing the lobby must not probe the network.
                         // Networking starts only after explicit opt-in.
                     }
+                    ui.add_space(16.0);
+                    if ui.add(
+                        egui::Button::new(
+                            egui::RichText::new(format!("♥  {}", tr(lang, "Supporters", "المتبرعين")))
+                                .size(22.0)
+                                .strong()
+                                .color(egui::Color32::WHITE)
+                        )
+                        .min_size(egui::vec2(440.0, 70.0))
+                        .fill(egui::Color32::from_rgb(120, 74, 210))
+                    ).clicked() {
+                        self.play_sfx(SfxType::UiClick);
+                        self.show_support_dialog = true;
+                    }
                 });
                 ui.add_space(16.0);
-                if ui.button(tr(lang, "Check for Updates", "تحديث البرنامج")).clicked() {
+                let launcher_utility_size = egui::vec2(205.0, 30.0);
+                if ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("⟳  {}", tr(lang, "Check for Updates", "تحديث البرنامج")))
+                            .size(13.0)
+                    )
+                    .min_size(launcher_utility_size)
+                    .fill(egui::Color32::from_rgb(58, 60, 66))
+                ).clicked() {
                     self.check_for_updates(ctx.clone());
                 }
-                if ui.link(tr(lang, "Report a bug or suggest a feature",
-                    "بلّغ عن مشكلة أو اقترح ميزة")).clicked() {
+                ui.add_space(5.0);
+                if ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("💬  {}", tr(
+                            lang,
+                            "Report a bug or suggest a feature",
+                            "بلّغ عن مشكلة أو اقترح ميزة"
+                        )))
+                        .size(11.5)
+                    )
+                    .min_size(launcher_utility_size)
+                    .fill(egui::Color32::from_rgb(58, 60, 66))
+                ).clicked() {
                     self.show_feedback_dialog = true;
                 }
                 if !self.config.recent_projects.is_empty() {
@@ -5877,6 +6000,7 @@ impl eframe::App for StickApp {
             // need to start a drawing project just to install a new build.
             self.render_update_dialog(ctx, lang);
             self.render_feedback_dialog(ctx);
+            self.render_support_dialog(ctx, lang);
             self.render_guides(ctx,lang);
             return;
         }
@@ -7161,68 +7285,7 @@ impl eframe::App for StickApp {
         if self.show_support_dialog && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.show_support_dialog = false;
         }
-        if self.show_support_dialog {
-            let mut open = true;
-            let mut close_clicked = false;
-            // A bounded, fixed dialog avoids egui's unconstrained RTL child
-            // layout stretching the popup to the full viewport height.
-            egui::Window::new(tr(lang, "Support Stick Studio", "ادعم Stick Studio"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .fixed_size(egui::vec2(525.0, 305.0))
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("♥").size(23.0)
-                            .color(egui::Color32::from_rgb(255, 207, 64)));
-                        ui.heading(tr(lang, "Support is completely optional",
-                            "الدعم اختياري تمامًا"));
-                    });
-                    ui.separator();
-                    egui::Frame::none()
-                        .fill(egui::Color32::from_rgb(34, 37, 49))
-                        .rounding(7.0)
-                        .inner_margin(egui::Margin::same(10.0))
-                        .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_source("stick_support_text_scroll")
-                                .max_height(168.0)
-                                .show(ui, |ui| {
-                                    for (index, line) in support_message_lines(lang).into_iter().enumerate() {
-                                        let rich = egui::RichText::new(line)
-                                            .size(15.0)
-                                            .color(egui::Color32::from_rgb(238, 237, 245));
-                                        if lang == AppLang::Arabic {
-                                            // Explicit dimensions prevent each RTL row from
-                                            // consuming all remaining window vertical space.
-                                            ui.allocate_ui_with_layout(
-                                                egui::vec2(475.0, 22.0),
-                                                egui::Layout::right_to_left(egui::Align::Min),
-                                                |ui| { ui.add(egui::Label::new(rich)); },
-                                            );
-                                        } else {
-                                            ui.add(egui::Label::new(rich));
-                                        }
-                                        if index == 3 { ui.add_space(5.0); }
-                                    }
-                                });
-                        });
-                    ui.add_space(5.0);
-                    ui.label("🙂  🥳");
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.hyperlink_to(
-                            tr(lang, "Optional InstaPay reward", "رابط المكافأة على إنستا باي"),
-                            SUPPORT_URL,
-                        );
-                        if ui.button(tr(lang, "Close", "إغلاق")).clicked() {
-                            close_clicked = true;
-                        }
-                    });
-                });
-            self.show_support_dialog = open && !close_clicked;
-        }
+        self.render_support_dialog(ctx, lang);
 
         self.render_update_dialog(ctx, lang);
         self.render_feedback_dialog(ctx);
@@ -11315,6 +11378,11 @@ mod tool_discovery_tests {
         assert_eq!(tr(AppLang::English, "What are you here to do?", "انت داخل تعمل ايه ؟"),
             "What are you here to do?");
         assert!(!"Stick".contains("Studio"));
+    }
+    #[test]
+    fn supporters_roster_contains_only_hazem_with_two_egp() {
+        assert_eq!(SUPPORTERS.len(), 1);
+        assert_eq!(SUPPORTERS[0], ("Hazem", "حازم", 2));
     }
     #[test]
     fn canvas_flip_shortcuts_default_to_requested_v_and_f() {
