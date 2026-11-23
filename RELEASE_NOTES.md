@@ -1,3 +1,9 @@
+# Stick v4.1.0 — Supporter link and export-folder shortcut (2026-11-23)
+
+- The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.
+- Successful exports now show a **folder button** beside **Done / تم** that opens the folder containing the exported file.
+- The folder shortcut works for video/GIF, still images, Sprite Sheet, and Lottie JSON exports.
+
 # Stick — Release notes / ملاحظات التحديث
 
 > **Maintainer checklist:** Update the English and Egyptian Arabic notes for **every new release** before publishing. Never claim features that did not pass tests.
