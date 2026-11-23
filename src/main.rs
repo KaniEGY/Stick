@@ -67,7 +67,9 @@ const GITHUB_REPO: &str = "KaniEGY/Stick";
 const YOUTUBE_CHANNEL_URL: &str = "https://www.youtube.com/@%D8%A7%D8%A8%D9%84%D9%83%D8%A7%D8%B4-%D8%A7%D9%86%D9%85%D9%8A%D8%B4%D9%86";
 const INSTAGRAM_URL: &str = "https://www.instagram.com/ablikash?exln=NmFtNWZidnBvb3k1";
 const SUPPORT_URL: &str = "https://ipn.eg/S/imhady/instapay/0tZZ7c";
-const SUPPORTERS: [(&str, &str, u32); 1] = [("Hazem", "حازم", 2)];
+const HAZEM_INSTAGRAM_URL: &str = "https://www.instagram.com/hazem.draws?dmpr=MTZkNXNsOXRhMnpqOQ%3D%3D";
+const SUPPORTERS: [(&str, &str, u32, &str); 1] =
+    [("Hazem", "حازم", 2, HAZEM_INSTAGRAM_URL)];
 
 #[derive(Clone, Copy, PartialEq)]
 enum WorkspaceMode {
@@ -128,7 +130,7 @@ enum SymmetryMode {
 enum ExportTaskState {
     Idle,
     Running(String),
-    Done(String),
+    Done(String, PathBuf),
     Failed(String),
 }
 
@@ -148,6 +150,37 @@ enum SfxType {
     SystemUiDismiss,
     SystemUiActivate,
     ToolSelect(u8),
+}
+
+fn open_export_folder(output_path: &Path) -> Result<(), String> {
+    let folder = output_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(folder);
+        cmd
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(folder);
+        cmd
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(folder);
+        cmd
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("Could not open export folder '{}': {err}", folder.display()))
 }
 
 // Original synthesised game-style UI sounds. No external assets or audio downloads.
@@ -2942,7 +2975,10 @@ impl StickApp {
             match res {
                 Ok(_) => {
                     play_sfx_async(sfx_ok, SfxType::ExportSuccess, false);
-                    *st = ExportTaskState::Done(format!("تم التصدير بنجاح بصيغة .{}!", fmt.ext().to_uppercase()));
+                    *st = ExportTaskState::Done(
+                        format!("تم التصدير بنجاح بصيغة .{}!", fmt.ext().to_uppercase()),
+                        output_path.clone(),
+                    );
                 }
                 Err(err) => *st = ExportTaskState::Failed(err),
             }
@@ -4801,18 +4837,30 @@ impl StickApp {
                 ui.separator();
                 ui.add_space(8.0);
 
-                for (en_name, ar_name, amount) in SUPPORTERS {
+                for (en_name, ar_name, amount, profile_url) in SUPPORTERS {
                     egui::Frame::none()
                         .fill(egui::Color32::from_rgb(70, 44, 112))
                         .rounding(9.0)
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("👑")
-                                        .size(19.0)
-                                        .color(egui::Color32::from_rgb(255, 206, 53)),
-                                );
+                                let crown = ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("👑")
+                                                .size(19.0)
+                                                .color(egui::Color32::from_rgb(255, 206, 53)),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .on_hover_text(tr(
+                                        lang,
+                                        "Open supporter's Instagram",
+                                        "افتح إنستجرام المتبرع",
+                                    ));
+                                if crown.clicked() {
+                                    ctx.open_url(egui::OpenUrl::new_tab(profile_url));
+                                }
                                 ui.label(
                                     egui::RichText::new(tr(lang, en_name, ar_name))
                                         .size(20.0)
@@ -6397,9 +6445,23 @@ impl eframe::App for StickApp {
                 ui.separator();
                 match task_st {
                     ExportTaskState::Running(msg) => { ui.horizontal(|ui| { ui.spinner(); ui.label(fix_ar(&msg)); }); ctx.request_repaint(); }
-                    ExportTaskState::Done(msg) => {
+                    ExportTaskState::Done(msg, output_path) => {
                         ui.colored_label(egui::Color32::GREEN, fix_ar(&msg));
-                        if ui.button(tr(lang, "Done", "تم")).clicked() { *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) = ExportTaskState::Idle; self.show_export_studio = false; }
+                        ui.horizontal(|ui| {
+                            if ui.button(tr(lang, "Done", "تم")).clicked() {
+                                *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) = ExportTaskState::Idle;
+                                self.show_export_studio = false;
+                            }
+                            if ui
+                                .add(egui::Button::new("📁").min_size(egui::vec2(32.0, 24.0)))
+                                .on_hover_text(tr(lang, "Open export folder", "فتح مجلد التصدير"))
+                                .clicked()
+                            {
+                                if let Err(err) = open_export_folder(&output_path) {
+                                    self.status_message = err;
+                                }
+                            }
+                        });
                     }
                     ExportTaskState::Failed(err) => {
                         ui.colored_label(egui::Color32::LIGHT_RED, fix_ar(&err));
@@ -6431,7 +6493,8 @@ impl eframe::App for StickApp {
                                         if p.extension().is_none() { p.set_extension(ext); }
                                         if exporter::export_single_image_format(&self.project, self.current_frame, &p, self.selected_image_format, self.stage_bg_color).is_ok() {
                                             self.play_sfx(SfxType::ExportSuccess);
-                                            *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) = ExportTaskState::Done("تم حفظ الصورة!".to_string());
+                                            *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                                                ExportTaskState::Done("تم حفظ الصورة!".to_string(), p.clone());
                                         }
                                     }
                                 }
@@ -6443,7 +6506,8 @@ impl eframe::App for StickApp {
                                 if let Some(mut p) = rfd::FileDialog::new().add_filter("PNG", &["png"]).set_file_name("SpriteSheet.png").save_file() {
                                     if p.extension().is_none() { p.set_extension("png"); }
                                     if exporter::export_sprite_sheet(&self.project, &p).is_ok() {
-                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) = ExportTaskState::Done("تم تصدير Sprite Sheet!".to_string());
+                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                                            ExportTaskState::Done("تم تصدير Sprite Sheet!".to_string(), p.clone());
                                     }
                                 }
                             }
@@ -6454,7 +6518,8 @@ impl eframe::App for StickApp {
                                 if let Some(mut p) = rfd::FileDialog::new().add_filter("JSON", &["json"]).set_file_name("Lottie.json").save_file() {
                                     if p.extension().is_none() { p.set_extension("json"); }
                                     if exporter::export_lottie_json(&self.project, &p).is_ok() {
-                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) = ExportTaskState::Done("تم تصدير Lottie JSON!".to_string());
+                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                                            ExportTaskState::Done("تم تصدير Lottie JSON!".to_string(), p.clone());
                                     }
                                 }
                             }
@@ -11382,7 +11447,10 @@ mod tool_discovery_tests {
     #[test]
     fn supporters_roster_contains_only_hazem_with_two_egp() {
         assert_eq!(SUPPORTERS.len(), 1);
-        assert_eq!(SUPPORTERS[0], ("Hazem", "حازم", 2));
+        assert_eq!(
+            SUPPORTERS[0],
+            ("Hazem", "حازم", 2, HAZEM_INSTAGRAM_URL)
+        );
     }
     #[test]
     fn canvas_flip_shortcuts_default_to_requested_v_and_f() {
