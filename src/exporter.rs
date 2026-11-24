@@ -176,83 +176,7 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
             .then(|| Pixmap::new(w, h).expect("Canvas dimensions already checked"));
         let layer_pixmap = layer_buffer.as_mut().unwrap_or(&mut pixmap);
 
-        for m in &fd.media_items {
-            if let Ok(img) = image::open(&m.path) {
-                let mut resized = img
-                    .resize_exact(
-                        m.width.max(1.0) as u32,
-                        m.height.max(1.0) as u32,
-                        image::imageops::FilterType::Triangle,
-                    )
-                    .to_rgba8();
-                if layer.effect != crate::project::LayerEffectPreset::None {
-                    for pixel in resized.pixels_mut() {
-                        pixel.0=layer.effect.apply_rgba(pixel.0);
-                    }
-                }
-                if let Some(mut sub_pix) = Pixmap::new(resized.width(), resized.height()) {
-                    copy_straight_rgba_to_pixmap(&resized, &mut sub_pix);
-                    let w = resized.width() as f32;
-                    let h = resized.height() as f32;
-                    let x_scale = if m.flip_h { -1.0 } else { 1.0 };
-                    let y_scale = if m.flip_v { -1.0 } else { 1.0 };
-                    let transform = Transform::from_translate(-w * 0.5, -h * 0.5)
-                        .post_scale(x_scale, y_scale)
-                        .post_rotate(m.rotation_deg)
-                        .post_translate(m.x + m.width * 0.5, m.y + m.height * 0.5);
-                    layer_pixmap.draw_pixmap(
-                        0,
-                        0,
-                        sub_pix.as_ref(),
-                        &tiny_skia::PixmapPaint::default(),
-                        transform,
-                        None,
-                    );
-                }
-            }
-        }
-
-        for s in &fd.strokes {
-            if layer.effect == crate::project::LayerEffectPreset::None {
-                draw_skia_stroke(layer_pixmap, s, Transform::identity());
-            } else {
-                let mut effected = s.clone();
-                effected.color = layer.effect.apply_rgba(effected.color);
-                effected.fill_color = effected.fill_color.map(|c| layer.effect.apply_rgba(c));
-                draw_skia_stroke(layer_pixmap, &effected, Transform::identity());
-            }
-        }
-
-        // Text must be present in every export, not only in the editor preview.
-        for item in &fd.text_items {
-            if layer.effect == crate::project::LayerEffectPreset::None {
-                draw_export_text(layer_pixmap, item);
-            } else {
-                let mut effected = item.clone();
-                effected.color = layer.effect.apply_rgba(effected.color);
-                draw_export_text(layer_pixmap, &effected);
-            }
-        }
-
-        for inst in &fd.symbol_instances {
-            if let Some(sym) = project.library_symbols.get(&inst.symbol_name) {
-                let sym_strokes = project.evaluate_symbol_strokes(sym, frame_idx);
-                let ts = Transform::from_translate(-inst.anchor_offset_x, -inst.anchor_offset_y)
-                    .post_scale(inst.scale, inst.scale)
-                    .post_rotate(inst.rotation_deg)
-                    .post_translate(inst.x + inst.anchor_offset_x, inst.y + inst.anchor_offset_y);
-                for s in sym_strokes {
-                    if layer.effect == crate::project::LayerEffectPreset::None {
-                        draw_skia_stroke(layer_pixmap, s, ts);
-                    } else {
-                        let mut effected = s.clone();
-                        effected.color = layer.effect.apply_rgba(effected.color);
-                        effected.fill_color = effected.fill_color.map(|c| layer.effect.apply_rgba(c));
-                        draw_skia_stroke(layer_pixmap, &effected, ts);
-                    }
-                }
-            }
-        }
+        render_layer_contents(project, layer, &fd, frame_idx, layer_pixmap);
 
         if let Some(layer_pixmap) = layer_buffer {
             pixmap.draw_pixmap(
@@ -269,6 +193,105 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
         }
     }
     pixmap
+}
+
+// Shared layer rasterization for export and the editor's group-opacity preview.
+fn render_layer_contents(
+    project: &AniProject,
+    layer: &crate::project::Layer,
+    fd: &crate::project::FrameData,
+    frame_idx: usize,
+    layer_pixmap: &mut Pixmap,
+) {
+    for m in &fd.media_items {
+        if let Ok(img) = image::open(&m.path) {
+            let mut resized = img
+                .resize_exact(
+                    m.width.max(1.0) as u32,
+                    m.height.max(1.0) as u32,
+                    image::imageops::FilterType::Triangle,
+                )
+                .to_rgba8();
+            if layer.effect != crate::project::LayerEffectPreset::None {
+                for pixel in resized.pixels_mut() {
+                    pixel.0=layer.effect.apply_rgba(pixel.0);
+                }
+            }
+            if let Some(mut sub_pix) = Pixmap::new(resized.width(), resized.height()) {
+                copy_straight_rgba_to_pixmap(&resized, &mut sub_pix);
+                let w = resized.width() as f32;
+                let h = resized.height() as f32;
+                let x_scale = if m.flip_h { -1.0 } else { 1.0 };
+                let y_scale = if m.flip_v { -1.0 } else { 1.0 };
+                let transform = Transform::from_translate(-w * 0.5, -h * 0.5)
+                    .post_scale(x_scale, y_scale)
+                    .post_rotate(m.rotation_deg)
+                    .post_translate(m.x + m.width * 0.5, m.y + m.height * 0.5);
+                layer_pixmap.draw_pixmap(
+                    0,
+                    0,
+                    sub_pix.as_ref(),
+                    &tiny_skia::PixmapPaint::default(),
+                    transform,
+                    None,
+                );
+            }
+        }
+    }
+
+    for s in &fd.strokes {
+        if layer.effect == crate::project::LayerEffectPreset::None {
+            draw_skia_stroke(layer_pixmap, s, Transform::identity());
+        } else {
+            let mut effected = s.clone();
+            effected.color = layer.effect.apply_rgba(effected.color);
+            effected.fill_color = effected.fill_color.map(|c| layer.effect.apply_rgba(c));
+            draw_skia_stroke(layer_pixmap, &effected, Transform::identity());
+        }
+    }
+
+    // Text must be present in every export, not only in the editor preview.
+    for item in &fd.text_items {
+        if layer.effect == crate::project::LayerEffectPreset::None {
+            draw_export_text(layer_pixmap, item);
+        } else {
+            let mut effected = item.clone();
+            effected.color = layer.effect.apply_rgba(effected.color);
+            draw_export_text(layer_pixmap, &effected);
+        }
+    }
+
+    for inst in &fd.symbol_instances {
+        if let Some(sym) = project.library_symbols.get(&inst.symbol_name) {
+            let sym_strokes = project.evaluate_symbol_strokes(sym, frame_idx);
+            let ts = Transform::from_translate(-inst.anchor_offset_x, -inst.anchor_offset_y)
+                .post_scale(inst.scale, inst.scale)
+                .post_rotate(inst.rotation_deg)
+                .post_translate(inst.x + inst.anchor_offset_x, inst.y + inst.anchor_offset_y);
+            for s in sym_strokes {
+                if layer.effect == crate::project::LayerEffectPreset::None {
+                    draw_skia_stroke(layer_pixmap, s, ts);
+                } else {
+                    let mut effected = s.clone();
+                    effected.color = layer.effect.apply_rgba(effected.color);
+                    effected.fill_color = effected.fill_color.map(|c| layer.effect.apply_rgba(c));
+                    draw_skia_stroke(layer_pixmap, &effected, ts);
+                }
+            }
+        }
+    }
+
+}
+
+pub(crate) fn render_layer_rgba(
+    project: &AniProject,
+    layer: &crate::project::Layer,
+    fd: &crate::project::FrameData,
+    frame_idx: usize,
+) -> Option<RgbaImage> {
+    let mut pixmap = Pixmap::new(project.width.max(1), project.height.max(1))?;
+    render_layer_contents(project, layer, fd, frame_idx, &mut pixmap);
+    Some(pixmap_to_rgba_image(&pixmap))
 }
 
 /// Load one local system font that can draw both Arabic presentation forms
