@@ -69,7 +69,7 @@ const INSTAGRAM_URL: &str = "https://www.instagram.com/ablikash?exln=NmFtNWZidnB
 const SUPPORT_URL: &str = "https://ipn.eg/S/imhady/instapay/0tZZ7c";
 const HAZEM_INSTAGRAM_URL: &str = "https://www.instagram.com/hazem.draws?dmpr=MTZkNXNsOXRhMnpqOQ%3D%3D";
 const SUPPORTERS: [(&str, &str, u32, &str); 1] =
-    [("Hazem", "حازم", 2, HAZEM_INSTAGRAM_URL)];
+    [("Hazem", "حازم", 12, HAZEM_INSTAGRAM_URL)];
 
 #[derive(Clone, Copy, PartialEq)]
 enum WorkspaceMode {
@@ -9054,60 +9054,74 @@ impl eframe::App for StickApp {
                                     }
                                 }
                                 let is_locked = layer.locked;
-                                cresp.context_menu(|ui| {
-                                    ui.strong(format!("{} — {}", layer.name, f));
-                                    ui.separator();
-                                    if is_b { return; }
-                                    if ui.button(tr(lang, "Copy Frame", "انسخ الفريم")).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Copy));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked,
-                                        egui::Button::new(tr(lang,"Cut Frame","قص الفريم"))).clicked() {
-                                        frame_menu_action=Some((l_idx,f,timeline_ops::FrameAction::Cut));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked && self.clipboard_frame.is_some(),
-                                        egui::Button::new(tr(lang, "Paste over cel", "الصق مكان الخلية"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Paste));
-                                        ui.close_menu();
-                                    }
-                                    ui.separator();
-                                    let can_insert = !is_locked && self.timeline_length < timeline_ops::MAX_TIMELINE_FRAMES;
-                                    if ui.add_enabled(can_insert, egui::Button::new(
-                                        tr(lang, "Duplicate cel after (this layer)", "كرّر الخلية بعدها في الطبقة دي"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Duplicate));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(can_insert, egui::Button::new(
-                                        tr(lang, "Insert empty cel before (this layer)", "أدرج خلية فاضية قبلها في الطبقة دي"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::InsertEmpty));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked, egui::Button::new(
-                                        tr(lang, "Create Keyframe", "اعمل كي فريم"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Keyframe));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked, egui::Button::new(
-                                        tr(lang, "Blank Keyframe", "كي فريم فاضي"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::BlankKeyframe));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked && layer.keyframes.contains_key(&f),
-                                        egui::Button::new(tr(lang, "Delete Keyframe", "احذف الكي فريم"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteKeyframe));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(can_delete_global, egui::Button::new(
-                                        tr(lang, "Delete Time (all layers)", "احذف زمن الفريم من كل الليرز"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteFrame));
-                                        ui.close_menu();
-                                    }
-                                    if !can_delete_global {
-                                        ui.small(tr(lang, "Unlock layers before deleting time.", "افتح قفل الليرز عشان تحذف الزمن."));
-                                    }
-                                });
+                                if !is_b {
+                                    cresp.context_menu(|ui| {
+                                        // The timeline cell may be only a few pixels wide.
+                                        // Give the popup its own width instead of inheriting that cell.
+                                        ui.set_min_width(280.0);
+                                        ui.strong(format!("{} — {} {}", layer.name, tr(lang, "Frame", "فريم"), f));
+                                        ui.separator();
+                                        ui.small(tr(lang, "Clipboard", "نسخ ولصق"));
+                                        if ui.button(tr(lang, "Copy frame", "نسخ الفريم")).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Copy));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked, egui::Button::new(
+                                            tr(lang, "Cut frame", "قص الفريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Cut));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked && self.clipboard_frame.is_some(),
+                                            egui::Button::new(tr(lang, "Paste into frame", "لصق في الفريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Paste));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        ui.small(tr(lang, "Frame operations — this layer", "عمليات الفريم — الطبقة الحالية"));
+                                        let can_insert = !is_locked && self.timeline_length < timeline_ops::MAX_TIMELINE_FRAMES;
+                                        if ui.add_enabled(can_insert, egui::Button::new(
+                                            tr(lang, "Duplicate frame after", "تكرار الفريم بعد الحالي"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Duplicate));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(can_insert, egui::Button::new(
+                                            tr(lang, "Insert empty frame before", "إدراج فريم فاضي قبل الحالي"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::InsertEmpty));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        ui.small(tr(lang, "Keyframes", "الفريمات الأساسية"));
+                                        if ui.add_enabled(!is_locked, egui::Button::new(
+                                            tr(lang, "Create keyframe", "إنشاء كي فريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Keyframe));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked, egui::Button::new(
+                                            tr(lang, "Blank keyframe", "إنشاء كي فريم فاضي"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::BlankKeyframe));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked && layer.keyframes.contains_key(&f),
+                                            egui::Button::new(tr(lang, "Delete keyframe", "حذف الكي فريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteKeyframe));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        ui.small(tr(lang, "Timeline — all layers", "التايم لاين — كل الطبقات"));
+                                        if ui.add_enabled(can_delete_global, egui::Button::new(
+                                            egui::RichText::new(tr(lang, "Delete time in all layers", "حذف زمن الفريم من كل الطبقات"))
+                                                .color(egui::Color32::LIGHT_RED))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteFrame));
+                                            ui.close_menu();
+                                        }
+                                        if !can_delete_global {
+                                            ui.small(tr(lang, "Unlock layers to delete time.", "افتح قفل الطبقات لحذف الزمن."));
+                                        }
+                                        if ui.button(tr(lang, "Close menu", "إغلاق القائمة")).clicked() {
+                                            ui.close_menu();
+                                        }
+                                    });
+                                }
                             }
                         });
                     }
@@ -11445,11 +11459,11 @@ mod tool_discovery_tests {
         assert!(!"Stick".contains("Studio"));
     }
     #[test]
-    fn supporters_roster_contains_only_hazem_with_two_egp() {
+    fn supporters_roster_contains_only_hazem_with_twelve_egp() {
         assert_eq!(SUPPORTERS.len(), 1);
         assert_eq!(
             SUPPORTERS[0],
-            ("Hazem", "حازم", 2, HAZEM_INSTAGRAM_URL)
+            ("Hazem", "حازم", 12, HAZEM_INSTAGRAM_URL)
         );
     }
     #[test]
