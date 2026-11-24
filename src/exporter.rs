@@ -3,10 +3,10 @@ use image::codecs::gif::{GifEncoder, Repeat};
 use image::{Delay, Frame, ImageFormat, RgbaImage};
 use rayon::prelude::*;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -165,8 +165,16 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
             continue;
         }
 
-        let mut layer_pixmap = Pixmap::new(w, h).expect("Canvas dimensions already checked");
         let fd = project.evaluate_layer_at_frame(layer, frame_idx);
+        if fd.media_items.is_empty() && fd.strokes.is_empty()
+            && fd.text_items.is_empty() && fd.symbol_instances.is_empty() {
+            continue;
+        }
+        // Fully opaque layers can be drawn directly onto the destination.
+        // Only partially transparent layers need a separate full-canvas buffer.
+        let mut layer_buffer = (layer_alpha < 1.0)
+            .then(|| Pixmap::new(w, h).expect("Canvas dimensions already checked"));
+        let layer_pixmap = layer_buffer.as_mut().unwrap_or(&mut pixmap);
 
         for m in &fd.media_items {
             if let Ok(img) = image::open(&m.path) {
@@ -183,7 +191,7 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
                     }
                 }
                 if let Some(mut sub_pix) = Pixmap::new(resized.width(), resized.height()) {
-                    sub_pix.data_mut().copy_from_slice(resized.as_raw());
+                    copy_straight_rgba_to_pixmap(&resized, &mut sub_pix);
                     let w = resized.width() as f32;
                     let h = resized.height() as f32;
                     let x_scale = if m.flip_h { -1.0 } else { 1.0 };
@@ -206,23 +214,23 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
 
         for s in &fd.strokes {
             if layer.effect == crate::project::LayerEffectPreset::None {
-                draw_skia_stroke(&mut layer_pixmap, s, Transform::identity());
+                draw_skia_stroke(layer_pixmap, s, Transform::identity());
             } else {
                 let mut effected = s.clone();
                 effected.color = layer.effect.apply_rgba(effected.color);
                 effected.fill_color = effected.fill_color.map(|c| layer.effect.apply_rgba(c));
-                draw_skia_stroke(&mut layer_pixmap, &effected, Transform::identity());
+                draw_skia_stroke(layer_pixmap, &effected, Transform::identity());
             }
         }
 
         // Text must be present in every export, not only in the editor preview.
         for item in &fd.text_items {
             if layer.effect == crate::project::LayerEffectPreset::None {
-                draw_export_text(&mut layer_pixmap, item);
+                draw_export_text(layer_pixmap, item);
             } else {
                 let mut effected = item.clone();
                 effected.color = layer.effect.apply_rgba(effected.color);
-                draw_export_text(&mut layer_pixmap, &effected);
+                draw_export_text(layer_pixmap, &effected);
             }
         }
 
@@ -235,28 +243,30 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
                     .post_translate(inst.x + inst.anchor_offset_x, inst.y + inst.anchor_offset_y);
                 for s in sym_strokes {
                     if layer.effect == crate::project::LayerEffectPreset::None {
-                        draw_skia_stroke(&mut layer_pixmap, s, ts);
+                        draw_skia_stroke(layer_pixmap, s, ts);
                     } else {
                         let mut effected = s.clone();
                         effected.color = layer.effect.apply_rgba(effected.color);
                         effected.fill_color = effected.fill_color.map(|c| layer.effect.apply_rgba(c));
-                        draw_skia_stroke(&mut layer_pixmap, &effected, ts);
+                        draw_skia_stroke(layer_pixmap, &effected, ts);
                     }
                 }
             }
         }
 
-        pixmap.draw_pixmap(
-            0,
-            0,
-            layer_pixmap.as_ref(),
-            &tiny_skia::PixmapPaint {
-                opacity: layer_alpha,
-                ..tiny_skia::PixmapPaint::default()
-            },
-            Transform::identity(),
-            None,
-        );
+        if let Some(layer_pixmap) = layer_buffer {
+            pixmap.draw_pixmap(
+                0,
+                0,
+                layer_pixmap.as_ref(),
+                &tiny_skia::PixmapPaint {
+                    opacity: layer_alpha,
+                    ..tiny_skia::PixmapPaint::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
     }
     pixmap
 }
@@ -467,6 +477,17 @@ fn draw_skia_stroke(pixmap: &mut Pixmap, s: &crate::project::Stroke, ts: Transfo
     });
 }
 
+// tiny-skia accepts premultiplied pixels; decoded PNG/media pixels are straight RGBA.
+fn copy_straight_rgba_to_pixmap(image: &RgbaImage, pixmap: &mut Pixmap) {
+    for (src, dst) in image.as_raw().chunks_exact(4).zip(pixmap.data_mut().chunks_exact_mut(4)) {
+        let alpha = u16::from(src[3]);
+        for c in 0..3 {
+            dst[c] = ((u16::from(src[c]) * alpha + 127) / 255) as u8;
+        }
+        dst[3] = src[3];
+    }
+}
+
 fn pixmap_to_rgba_image(pixmap: &Pixmap) -> RgbaImage {
     let w = pixmap.width();
     let h = pixmap.height();
@@ -489,13 +510,15 @@ pub fn export_single_image_format(
     bg_rgba: [u8; 4],
 ) -> Result<(), String> {
     let pixmap = render_frame_pixmap(project, frame_idx, format.is_transparent(), bg_rgba);
+    if matches!(format, ImageExportFormat::PngTransparent | ImageExportFormat::PngSolid) {
+        // tiny-skia writes PNG using straight RGBA (including transparent pixels).
+        return pixmap.save_png(out_path).map_err(|e| e.to_string());
+    }
     let img_buf = pixmap_to_rgba_image(&pixmap);
     let dyn_img = image::DynamicImage::ImageRgba8(img_buf);
 
     match format {
-        ImageExportFormat::PngTransparent | ImageExportFormat::PngSolid => {
-            dyn_img.save_with_format(out_path, ImageFormat::Png).map_err(|e| e.to_string())
-        }
+        ImageExportFormat::PngTransparent | ImageExportFormat::PngSolid => unreachable!(),
         ImageExportFormat::Jpg => {
             image::DynamicImage::ImageRgb8(dyn_img.to_rgb8())
                 .save_with_format(out_path, ImageFormat::Jpeg)
@@ -632,26 +655,58 @@ pub fn export_lottie_json(project: &AniProject, out_path: &Path) -> Result<(), S
     fs::write(out_path, serialized).map_err(|e| e.to_string())
 }
 
-pub fn export_instant_gif(project: &AniProject, out_path: &Path, bg_rgba: [u8; 4]) -> Result<(), String> {
+// A held drawing only needs to be rendered once. Be conservative for projects
+// with motion/shape tweens or nested animated symbols: render each frame.
+fn export_frame_runs(project: &AniProject) -> Vec<(usize, usize)> {
     let total = project.total_frames.max(1);
+    let dynamic = project.library_symbols.values().any(|s| !s.nested_keyframes.is_empty())
+        || project.layers.iter().filter(|l| l.visible && !l.is_guide).any(|l| {
+            l.keyframes.values().any(|f| f.motion_tween || f.tween_mode != crate::project::TweenMode::None)
+        });
+    if dynamic {
+        return (1..=total).map(|frame| (frame, 1)).collect();
+    }
+    let mut starts = std::collections::BTreeSet::new();
+    starts.insert(1);
+    for layer in project.layers.iter().filter(|l| l.visible && !l.is_guide) {
+        starts.extend(layer.keyframes.keys().copied().filter(|&f| f >= 1 && f <= total));
+    }
+    let starts: Vec<usize> = starts.into_iter().collect();
+    starts.iter().enumerate().map(|(i, &start)| {
+        let end = starts.get(i + 1).copied().unwrap_or(total.saturating_add(1));
+        (start, end.saturating_sub(start).max(1))
+    }).collect()
+}
+
+// Keep parallel rendering bounded by memory rather than retaining an entire
+// animation in RAM. Budget includes the frame plus temporary compositing space.
+fn export_batch_size(project: &AniProject) -> usize {
+    let bytes = u64::from(project.width.max(1)) * u64::from(project.height.max(1)) * 8;
+    let budget = 64 * 1024 * 1024u64;
+    ((budget / bytes.max(1)).max(1) as usize)
+        .min(rayon::current_num_threads().max(1))
+        .min(8)
+}
+
+pub fn export_instant_gif(project: &AniProject, out_path: &Path, bg_rgba: [u8; 4]) -> Result<(), String> {
     let fps = project.fps.max(1);
     let delay_ms = (1000 / fps).max(15);
-
-    let frames_rgba: Vec<RgbaImage> = (1..=total)
-        .into_par_iter()
-        .map(|f| {
-            let pix = render_frame_pixmap(project, f, false, bg_rgba);
-            pixmap_to_rgba_image(&pix)
-        })
-        .collect();
-
-    let file = fs::File::create(out_path).map_err(|e| e.to_string())?;
+    let file = BufWriter::new(fs::File::create(out_path).map_err(|e| e.to_string())?);
     let mut encoder = GifEncoder::new_with_speed(file, 10);
     encoder.set_repeat(Repeat::Infinite).map_err(|e| e.to_string())?;
-
-    for img in frames_rgba {
-        let frame = Frame::from_parts(img, 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
-        encoder.encode_frame(frame).map_err(|e| e.to_string())?;
+    let runs = export_frame_runs(project);
+    for batch in runs.chunks(export_batch_size(project)) {
+        let images: Vec<RgbaImage> = batch.par_iter().map(|&(frame, _)| {
+            pixmap_to_rgba_image(&render_frame_pixmap(project, frame, false, bg_rgba))
+        }).collect();
+        for (img, &(_, repeats)) in images.into_iter().zip(batch) {
+            for _ in 0..repeats.saturating_sub(1) {
+                let frame = Frame::from_parts(img.clone(), 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
+                encoder.encode_frame(frame).map_err(|e| e.to_string())?;
+            }
+            let frame = Frame::from_parts(img, 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
+            encoder.encode_frame(frame).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -670,79 +725,81 @@ pub fn export_video_multi_format(
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
-
     let ffmpeg_bin = ensure_ffmpeg_installed(&exe_dir)?;
+    let fps = project.fps.max(1).to_string();
+    let size = format!("{}x{}", project.width.max(1), project.height.max(1));
+    let transparent = format == VideoExportFormat::Webm;
 
-    let temp_dir = std::env::temp_dir().join(format!("stick_export_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&temp_dir);
-    fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
-
-    let total = project.total_frames.max(1);
-    let is_transparent = format == VideoExportFormat::Webm;
-
-    let indices: Vec<usize> = (1..=total).collect();
-    indices.par_iter().try_for_each(|&f| {
-        let pixmap = render_frame_pixmap(project, f, is_transparent, bg_rgba);
-        let file_path = temp_dir.join(format!("frame_{:04}.png", f));
-        pixmap.save_png(&file_path).map_err(|e| e.to_string())
-    })?;
-
-    let input_pattern = temp_dir.join("frame_%04d.png");
-    let fps_str = project.fps.max(1).to_string();
-    let in_str = input_pattern.to_str().unwrap_or("");
-    let out_str = output_path.to_str().unwrap_or("output.mp4");
-
+    // Stream raw frames directly to the encoder: no intermediate PNG
+    // compression/decompression, no temporary frame directory.
     let mut cmd = Command::new(&ffmpeg_bin);
-    cmd.args(["-y", "-framerate", &fps_str, "-i", in_str]);
-
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo",
+        "-pixel_format", "rgba", "-video_size", &size, "-framerate", &fps,
+        "-i", "pipe:0", "-an"]);
+    // Make the RGB -> YUV matrix and output metadata agree. Keep 4:2:0
+    // compatibility for common video players; PNG remains the exact RGB output.
+    let even_bt709 = "pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt709:out_range=tv";
+    let bt709 = "scale=out_color_matrix=bt709:out_range=tv";
     match format {
-        VideoExportFormat::Mp4 => {
-            cmd.args([
-                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-crf", "20",
-                "-pix_fmt", "yuv420p",
-                out_str,
-            ]);
-        }
-        VideoExportFormat::Mov => {
-            cmd.args([
-                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p",
-                "-f", "mov",
-                out_str,
-            ]);
+        VideoExportFormat::Mp4 | VideoExportFormat::Mov | VideoExportFormat::Mkv => {
+            cmd.args(["-vf", even_bt709, "-c:v", "libx264", "-preset", "ultrafast",
+                "-crf", "18", "-pix_fmt", "yuv420p", "-colorspace", "bt709",
+                "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]);
+            if format == VideoExportFormat::Mov { cmd.args(["-f", "mov"]); }
         }
         VideoExportFormat::Avi => {
-            cmd.args(["-c:v", "mpeg4", "-q:v", "3", out_str]);
-        }
-        VideoExportFormat::Mkv => {
-            cmd.args([
-                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p",
-                out_str,
-            ]);
+            cmd.args(["-vf", even_bt709, "-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p",
+                "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]);
         }
         VideoExportFormat::Webm => {
-            cmd.args(["-c:v", "libvpx-vp9", "-deadline", "realtime", "-pix_fmt", "yuva420p", out_str]);
+            cmd.args(["-vf", bt709, "-c:v", "libvpx-vp9", "-deadline", "realtime",
+                "-pix_fmt", "yuva420p", "-colorspace", "bt709", "-color_primaries", "bt709",
+                "-color_trc", "bt709", "-color_range", "tv"]);
         }
-        VideoExportFormat::GifInstant => {}
+        VideoExportFormat::GifInstant => unreachable!(),
     }
+    cmd.arg(output_path).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("FFmpeg launch error: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("FFmpeg stdin unavailable")?;
+    let mut stderr = child.stderr.take().ok_or("FFmpeg stderr unavailable")?;
+    // Drain stderr concurrently so an encoder error can never block the pipe.
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes);
+        bytes
+    });
 
-    let output = cmd.output().map_err(|e| format!("FFmpeg launch error: {}", e))?;
-    let _ = fs::remove_dir_all(&temp_dir);
-
-    if output.status.success() {
+    let write_result: Result<(), String> = (|| {
+        let runs = export_frame_runs(project);
+        for batch in runs.chunks(export_batch_size(project)) {
+            let rendered: Vec<Pixmap> = batch.par_iter().map(|&(frame, _)| {
+                render_frame_pixmap(project, frame, transparent, bg_rgba)
+            }).collect();
+            for (pixmap, &(_, repeats)) in rendered.into_iter().zip(batch) {
+                // An opaque Pixmap already contains straight RGB because alpha=255.
+                // Transparent WebM needs explicit unpremultiplication.
+                let straight = transparent.then(|| pixmap_to_rgba_image(&pixmap));
+                let bytes = straight.as_ref().map(|img| img.as_raw().as_slice())
+                    .unwrap_or_else(|| pixmap.data());
+                for _ in 0..repeats {
+                    stdin.write_all(bytes).map_err(|e| format!("FFmpeg frame write error: {e}"))?;
+                }
+            }
+        }
         Ok(())
-    } else {
-        let err_msg = String::from_utf8_lossy(&output.stderr);
-        Err(format!("فشل التصدير: {}", err_msg.lines().last().unwrap_or("Unknown error")))
+    })();
+    drop(stdin);
+    if write_result.is_err() { let _ = child.kill(); }
+    let status = child.wait().map_err(|e| format!("FFmpeg wait error: {e}"))?;
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr);
+        if !detail.trim().is_empty() {
+            return Err(format!("فشل التصدير: {}", detail.trim()));
+        }
+        return write_result.and(Err(format!("FFmpeg exited with {status}")));
     }
+    write_result
 }
 
 pub fn extract_video_frames(video_path: &Path, fps: u32) -> Result<Vec<PathBuf>, String> {
@@ -886,6 +943,39 @@ mod layer_opacity_tests {
             let rendered = render_frame_pixmap(&project, 1, true, [0;4]);
             let halo = rendered.pixel(24,33).unwrap().alpha();
             assert!(halo > 0 && halo < rendered.pixel(24,24).unwrap().alpha());
+        }
+    }
+
+    #[test]
+    fn straight_media_rgba_round_trips_without_darkening() {
+        let image = RgbaImage::from_raw(2, 1, vec![240, 80, 40, 128, 10, 200, 150, 255]).unwrap();
+        let mut pixmap = Pixmap::new(2, 1).unwrap();
+        copy_straight_rgba_to_pixmap(&image, &mut pixmap);
+        assert_eq!(&pixmap.data()[..4], &[120, 40, 20, 128]);
+        let decoded = pixmap_to_rgba_image(&pixmap);
+        for (a,b) in decoded.as_raw().iter().zip(image.as_raw()) {
+            assert!((i16::from(*a) - i16::from(*b)).abs() <= 1);
+        }
+    }
+
+    #[test]
+    fn held_frames_reuse_render_without_changing_duration() {
+        let mut project = project_with_solid_dab(1.0);
+        project.total_frames = 12;
+        project.layers[0].keyframes.insert(5, crate::project::FrameData::default());
+        assert_eq!(export_frame_runs(&project), vec![(1, 4), (5, 8)]);
+        project.layers[0].keyframes.get_mut(&1).unwrap().motion_tween = true;
+        assert_eq!(export_frame_runs(&project), (1..=12).map(|f| (f, 1)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn opaque_and_transparent_png_keep_solid_brush_rgb() {
+        let project = project_with_solid_dab(1.0);
+        for transparent in [false, true] {
+            let pixmap = render_frame_pixmap(&project, 1, transparent, [255; 4]);
+            let png = pixmap.encode_png().unwrap();
+            let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(decoded.get_pixel(24,24).0, [240,30,20,255]);
         }
     }
 
