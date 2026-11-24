@@ -748,8 +748,12 @@ pub fn export_video_multi_format(
             if format == VideoExportFormat::Mov { cmd.args(["-f", "mov"]); }
         }
         VideoExportFormat::Avi => {
-            cmd.args(["-vf", even_bt709, "-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p",
-                "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]);
+            // AVI players often ignore color metadata and assume BT.601.
+            // Use that matrix for this legacy container to avoid a color shift.
+            cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,scale=out_color_matrix=bt601:out_range=tv",
+                "-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p",
+                "-colorspace", "smpte170m", "-color_primaries", "smpte170m",
+                "-color_trc", "smpte170m", "-color_range", "tv"]);
         }
         VideoExportFormat::Webm => {
             cmd.args(["-vf", bt709, "-c:v", "libvpx-vp9", "-deadline", "realtime",
