@@ -8653,6 +8653,85 @@ impl eframe::App for StickApp {
         if let Some(in_front)=pose_depth_request {
             self.set_pose_rig_depth(in_front);
         }
+        if let Some(idx)=self.layer_settings_window {
+            let mut open=true;
+            let mut changed=false;
+            let mut open_effects=false;
+            let mut hide_rig=false;
+            if let Some(layer)=self.project.layers.get_mut(idx) {
+                let is_rig=layer.is_pose_rig;
+                let title=if is_rig {
+                    tr(lang,"Pose Rig Layer Settings","إعدادات طبقة الهيكل")
+                } else {
+                    tr(lang,"Layer Settings","إعدادات اللير")
+                };
+                egui::Window::new(title)
+                    .id(egui::Id::new(("layer_settings_window",idx)))
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_width(310.0)
+                    .show(ctx,|ui| {
+                        if is_rig {
+                            ui.strong(tr(lang,"Pose reference layer","طبقة مرجع الوضعية"));
+                            ui.small(tr(lang,
+                                "This editor-only layer controls the rig's place in the layer stack. It is never exported.",
+                                "الطبقة دي للمرجع فقط، بتحدد مكان الهيكل بين الطبقات ومش بتظهر في التصدير."));
+                            ui.horizontal(|ui| {
+                                ui.label(tr(lang,"Rig color","لون الهيكل"));
+                                if ui.color_edit_button_srgba_unmultiplied(
+                                    &mut self.project.pose_guide.color).changed() {
+                                    changed=true;
+                                }
+                            });
+                            if ui.add(egui::Slider::new(
+                                &mut self.project.pose_guide.opacity,0.05..=1.0)
+                                .text(tr(lang,"Rig opacity","شفافية الهيكل"))).changed() {
+                                changed=true;
+                            }
+                            if ui.button(tr(lang,"Front / Back","أمام / خلف")).clicked() {
+                                pose_depth_request=Some(!self.project.pose_guide.in_front);
+                            }
+                            if ui.button(tr(lang,"Hide pose rig","إخفاء الهيكل")).clicked() {
+                                hide_rig=true;
+                            }
+                        } else {
+                            ui.strong(tr(lang,"General layer properties","خصائص اللير الأساسية"));
+                            ui.separator();
+                            changed |= ui.text_edit_singleline(&mut layer.name).changed();
+                            changed |= ui.checkbox(&mut layer.visible,
+                                tr(lang,"Visible","ظاهر")).changed();
+                            changed |= ui.checkbox(&mut layer.locked,
+                                tr(lang,"Locked","مقفول")).changed();
+                            changed |= ui.add(egui::Slider::new(&mut layer.opacity,0.0..=1.0)
+                                .text(tr(lang,"Opacity","الشفافية"))).changed();
+                            changed |= ui.checkbox(&mut layer.is_guide,
+                                tr(lang,"Guide layer (not exported)","لير إرشادي (مش بيتصدر)")).changed();
+                            changed |= ui.checkbox(&mut layer.is_reference,
+                                tr(lang,"Use as fill reference","استخدمه كمرجع للتعبئة")).changed();
+                            ui.separator();
+                            if ui.button(tr(lang,"Layer effects...","مؤثرات اللير...")).clicked() {
+                                open_effects=true;
+                            }
+                        }
+                    });
+            } else {
+                open=false;
+            }
+            if changed {
+                self.has_unsaved_changes=true;
+                self.layer_preview_cache.remove(&idx);
+            }
+            if open_effects { self.layer_effect_window=Some(idx); }
+            if hide_rig {
+                self.project.pose_guide.visible=false;
+                self.pose_edit_mode=false;
+                self.pose_drag_joint=None;
+                self.sync_pose_rig_layer();
+                open=false;
+            }
+            if !open { self.layer_settings_window=None; }
+        }
         if let Some(idx)=self.layer_effect_window {
             if let Some(layer)=self.project.layers.get(idx) {
                 let current=layer.effect;
