@@ -9931,13 +9931,12 @@ impl eframe::App for StickApp {
         }
         if let Some(idx) = timeline_visibility_toggle {
             self.save_undo_state();
-            if self.project.layers.get(idx).is_some_and(|layer| layer.is_pose_rig) {
-                self.project.pose_guide.visible=false;
-                self.pose_edit_mode=false;
-                self.pose_drag_joint=None;
-                self.sync_pose_rig_layer();
-            } else if let Some(layer) = self.project.layers.get_mut(idx) {
+            if let Some(layer) = self.project.layers.get_mut(idx) {
                 layer.visible = !layer.visible;
+                if layer.is_pose_rig && !layer.visible {
+                    self.pose_edit_mode = false;
+                    self.pose_drag_joint = None;
+                }
                 self.has_unsaved_changes = true;
             }
         }
