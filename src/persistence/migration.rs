@@ -300,6 +300,11 @@ fn migrate_step_by_step(mut proj: AniProject, from_schema: u32) -> Result<AniPro
                 proj.total_frames = proj.total_frames.max(max_kf).max(1);
                 current = 5;
             }
+            5 => {
+                // v5 -> v6: persist canvas background and editor-only pose-rig settings.
+                // Missing fields are supplied by serde defaults (white background, hidden rig).
+                current = 6;
+            }
             _ => {
                 return Err(format!("لا يوجد مسار تحويل معروف من الإصدار v{}.", current));
             }
