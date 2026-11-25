@@ -8425,7 +8425,7 @@ impl eframe::App for StickApp {
                     }
                 });
             }
-            let can_delete_layers = self.project.layers.len() > 1;
+            let can_delete_layers = self.project.layers.iter().filter(|layer| !layer.is_pose_rig).count() > 1;
             let dims = (self.project.width.max(1) as f32, self.project.height.max(1) as f32);
             let current_frame = self.current_frame;
             let filter = self.layer_filter.trim().to_lowercase();
