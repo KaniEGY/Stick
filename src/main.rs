@@ -11946,7 +11946,7 @@ mod tool_discovery_tests {
             });
             keyframes.insert(frame,data);
         }
-        let mut layer=Layer{name:"Video".into(),visible:true,locked:false,is_guide:false,is_reference:false,
+        let mut layer=Layer{name:"Video".into(),visible:true,locked:false,is_guide:false,is_pose_rig:false,is_reference:false,
             xp_first_paint_rewarded:false,opacity:1.0,effect:LayerEffectPreset::None,keyframes};
         assert_eq!(StickApp::video_layer_range(&layer),Some((5,8)));
         assert!(StickApp::move_video_layer(&mut layer,20,100));
@@ -11961,7 +11961,7 @@ mod tool_discovery_tests {
             path:"image.png".into(),media_type:MediaType::Image,x:0.0,y:0.0,
             width:100.0,height:100.0,rotation_deg:0.0,flip_h:false,flip_v:false,
         });
-        let mut layer=Layer{name:"Image".into(),visible:true,locked:false,is_guide:false,is_reference:false,
+        let mut layer=Layer{name:"Image".into(),visible:true,locked:false,is_guide:false,is_pose_rig:false,is_reference:false,
             xp_first_paint_rewarded:false,opacity:1.0,effect:LayerEffectPreset::None,keyframes:HashMap::from([(3,data)])};
         assert_eq!(StickApp::image_layer_range(&layer,30),Some((3,30)));
         assert!(StickApp::set_image_layer_end(&mut layer,12,30));
@@ -11993,7 +11993,7 @@ mod tool_discovery_tests {
         data.media_items.push(MediaItem{
             path:"still.png".into(),media_type:MediaType::Image,x:0.,y:0.,
             width:100.,height:100.,rotation_deg:0.,flip_h:false,flip_v:false});
-        let mut layer=Layer{name:"Still".into(),visible:true,locked:false,is_guide:false,is_reference:false,
+        let mut layer=Layer{name:"Still".into(),visible:true,locked:false,is_guide:false,is_pose_rig:false,is_reference:false,
             xp_first_paint_rewarded:false,opacity:1.0,effect:LayerEffectPreset::None,
             keyframes:HashMap::from([(3,data)])};
         assert!(StickApp::set_image_layer_end(&mut layer,12,30));
@@ -12011,7 +12011,7 @@ mod tool_discovery_tests {
         data.media_items.push(MediaItem{
             path:"still.png".into(),media_type:MediaType::Image,x:0.,y:0.,
             width:100.,height:100.,rotation_deg:0.,flip_h:false,flip_v:false});
-        let mut layer=Layer{name:"Still".into(),visible:true,locked:false,is_guide:false,is_reference:false,
+        let mut layer=Layer{name:"Still".into(),visible:true,locked:false,is_guide:false,is_pose_rig:false,is_reference:false,
             xp_first_paint_rewarded:false,opacity:1.0,effect:LayerEffectPreset::None,
             keyframes:HashMap::from([(3,data)])};
         assert!(StickApp::set_image_layer_end(&mut layer,30,30));
