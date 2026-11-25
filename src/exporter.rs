@@ -583,7 +583,7 @@ pub fn export_sprite_sheet(project: &AniProject, out_path: &Path) -> Result<usiz
     let frames: Vec<RgbaImage> = (1..=total)
         .into_par_iter()
         .map(|f| {
-            let pix = render_frame_pixmap(project, f, true, [255, 255, 255, 255]);
+            let pix = render_frame_pixmap(project, f, project.background_transparent, project.background_color);
             pixmap_to_rgba_image(&pix)
         })
         .collect();
@@ -751,7 +751,7 @@ pub fn export_video_multi_format(
     let ffmpeg_bin = ensure_ffmpeg_installed(&exe_dir)?;
     let fps = project.fps.max(1).to_string();
     let size = format!("{}x{}", project.width.max(1), project.height.max(1));
-    let transparent = format == VideoExportFormat::Webm;
+    let transparent = format == VideoExportFormat::Webm && project.background_transparent;
 
     // Stream raw frames directly to the encoder: no intermediate PNG
     // compression/decompression, no temporary frame directory.
@@ -960,6 +960,43 @@ mod layer_opacity_tests {
     }
 
     #[test]
+    fn textured_brushes_preserve_selected_non_black_color_in_export() {
+        for preset in [
+            KritaBrushPreset::Watercolor,
+            KritaBrushPreset::SoftAirbrush,
+            KritaBrushPreset::SketchPencil,
+            KritaBrushPreset::SoftSketchPencil,
+            KritaBrushPreset::GraphitePencil,
+        ] {
+            let mut project = project_with_solid_dab(1.0);
+            project.width = 128;
+            project.height = 72;
+            let stroke = &mut project.layers[0].keyframes.get_mut(&1).unwrap().strokes[0];
+            stroke.color = [28, 154, 232, 255];
+            stroke.opacity = 1.0;
+            stroke.base_width = 18.0;
+            stroke.brush_preset = preset;
+            stroke.points[0].x = 10.0;
+            stroke.points[0].y = 36.0;
+            stroke.points.push(StrokePoint { x: 118.0, y: 36.0, pressure: 1.0 });
+
+            let rendered = render_frame_pixmap(&project, 1, true, [0; 4]);
+            let rgba = pixmap_to_rgba_image(&rendered);
+            let colored_pixels: Vec<_> = rgba.pixels()
+                .filter(|p| p.0[3] > 20)
+                .collect();
+            assert!(!colored_pixels.is_empty(), "{preset:?} produced no colored pixels");
+            assert!(
+                colored_pixels.iter().any(|p|
+                    (i16::from(p.0[0]) - 28).abs() <= 2
+                    && (i16::from(p.0[1]) - 154).abs() <= 2
+                    && (i16::from(p.0[2]) - 232).abs() <= 2),
+                "{preset:?} lost the selected RGB color"
+            );
+        }
+    }
+
+    #[test]
     fn watercolor_and_airbrush_export_the_translucent_outer_wash() {
         for preset in [KritaBrushPreset::Watercolor, KritaBrushPreset::SoftAirbrush] {
             let mut project = project_with_solid_dab(1.0);
@@ -974,6 +1011,23 @@ mod layer_opacity_tests {
     }
 
     #[test]
+    fn project_background_color_and_transparency_render_correctly() {
+        let mut project = AniProject::default();
+        project.width = 12;
+        project.height = 12;
+        project.background_color = [24, 112, 208, 255];
+        let solid = pixmap_to_rgba_image(&render_frame_pixmap(
+            &project, 1, false, project.background_color,
+        ));
+        assert_eq!(solid.get_pixel(6, 6).0, [24, 112, 208, 255]);
+
+        project.background_transparent = true;
+        let transparent = pixmap_to_rgba_image(&render_frame_pixmap(
+            &project, 1, true, project.background_color,
+        ));
+        assert_eq!(transparent.get_pixel(6, 6).0[3], 0);
+    }
+
     fn straight_media_rgba_round_trips_without_darkening() {
         let image = RgbaImage::from_raw(2, 1, vec![240, 80, 40, 128, 10, 200, 150, 255]).unwrap();
         let mut pixmap = Pixmap::new(2, 1).unwrap();

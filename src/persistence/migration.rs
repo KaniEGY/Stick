@@ -202,6 +202,7 @@ fn convert_legacy_v1(leg: LegacyProjectV1, label: &str) -> Result<(AniProject, M
             visible: l.visible,
             locked: l.locked,
             is_guide: false,
+            is_pose_rig: false,
             is_reference: false,
             xp_first_paint_rewarded: false,
             opacity: 1.0,
@@ -215,6 +216,9 @@ fn convert_legacy_v1(leg: LegacyProjectV1, label: &str) -> Result<(AniProject, M
         schema_version: 1,
         width: leg.width.max(1),
         height: leg.height.max(1),
+        background_color: [255,255,255,255],
+        background_transparent: false,
+        pose_guide: crate::pose_guide::PoseGuide::default(),
         fps: leg.fps.max(1),
         total_frames: max_len,
         layers: converted_layers,
@@ -258,6 +262,7 @@ fn migrate_step_by_step(mut proj: AniProject, from_schema: u32) -> Result<AniPro
                         visible: true,
                         locked: false,
                         is_guide: false,
+            is_pose_rig: false,
             is_reference: false,
                         xp_first_paint_rewarded: false,
                         opacity: 1.0,
@@ -294,6 +299,11 @@ fn migrate_step_by_step(mut proj: AniProject, from_schema: u32) -> Result<AniPro
                     .unwrap_or(1);
                 proj.total_frames = proj.total_frames.max(max_kf).max(1);
                 current = 5;
+            }
+            5 => {
+                // v5 -> v6: persist canvas background and editor-only pose-rig settings.
+                // Missing fields are supplied by serde defaults (white background, hidden rig).
+                current = 6;
             }
             _ => {
                 return Err(format!("لا يوجد مسار تحويل معروف من الإصدار v{}.", current));

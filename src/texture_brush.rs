@@ -327,13 +327,19 @@ impl TextureBrush {
         to_screen: impl Fn(f32, f32) -> egui::Pos2,
     ) {
         let ctx = painter.ctx();
-        let key = egui::Id::new(("stick_brush_mask", self as u8, stroke.tip_shape as u8));
+        // Bake the selected RGB into the cached alpha-mask texture itself.
+        // This avoids relying on vertex tinting for textured brushes and keeps
+        // watercolor, spray and graphite hues identical in preview and export.
+        let key = egui::Id::new((
+            "stick_brush_mask", self as u8, stroke.tip_shape as u8,
+            rgba[0], rgba[1], rgba[2],
+        ));
         let cached = ctx.data(|data| data.get_temp::<egui::TextureHandle>(key));
         let texture = cached.unwrap_or_else(|| {
             let pixels = self
                 .mask(stroke.tip_shape)
                 .iter()
-                .map(|&a| egui::Color32::from_rgba_unmultiplied(255, 255, 255, a))
+                .map(|&a| egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], a))
                 .collect();
             let texture = ctx.load_texture(
                 "brush tip",
@@ -349,10 +355,9 @@ impl TextureBrush {
         let mut mesh = egui::Mesh::with_texture(texture.id());
         self.stamps(stroke, |stamp| {
             let start = mesh.vertices.len() as u32;
-            let color = egui::Color32::from_rgba_unmultiplied(
-                rgba[0],
-                rgba[1],
-                rgba[2],
+            // The texture already contains the hue; vertex color only scales
+            // the flow/opacity for this stamp.
+            let color = egui::Color32::from_white_alpha(
                 (rgba[3] as f32 * stamp.flow).round() as u8,
             );
             for (u, v) in [(0., 0.), (1., 0.), (1., 1.), (0., 1.)] {
@@ -454,6 +459,40 @@ mod tests {
     }
 
     #[test]
+    fn colored_brush_masks_are_tinted_by_the_selected_color() {
+        for (brush, preset) in [
+            (TextureBrush::Watercolor, KritaBrushPreset::Watercolor),
+            (TextureBrush::Airbrush, KritaBrushPreset::SoftAirbrush),
+            (TextureBrush::Sketch, KritaBrushPreset::SketchPencil),
+            (TextureBrush::SoftSketch, KritaBrushPreset::SoftSketchPencil),
+            (TextureBrush::Graphite, KritaBrushPreset::GraphitePencil),
+        ] {
+            let stroke = Stroke {
+                points: vec![
+                    crate::project::StrokePoint { x: 12.0, y: 24.0, pressure: 1.0 },
+                    crate::project::StrokePoint { x: 116.0, y: 24.0, pressure: 1.0 },
+                ],
+                color: [28, 154, 232, 255],
+                fill_color: None,
+                base_width: 18.0,
+                is_vector: false,
+                brush_preset: preset,
+                opacity: 1.0,
+                brush_texture_id: None,
+                tip_shape: BrushTipShape::Round,
+            };
+            let mut target = Pixmap::new(128, 48).unwrap();
+            brush.export(&mut target, &stroke, 255, Transform::identity());
+            assert!(target.data().chunks_exact(4).any(|pixel| {
+                let alpha=i32::from(pixel[3]);
+                alpha > 20
+                    && ((i32::from(pixel[0]) * 255 / alpha) - 28).abs() <= 3
+                    && ((i32::from(pixel[1]) * 255 / alpha) - 154).abs() <= 3
+                    && ((i32::from(pixel[2]) * 255 / alpha) - 232).abs() <= 3
+            }), "{preset:?} texture ignored its stroke color");
+        }
+    }
+
     fn marker_routes_to_continuous_shared_stroke_engine() {
         let stroke=Stroke {
             points:Vec::new(),color:[0,0,0,255],fill_color:None,base_width:20.0,
