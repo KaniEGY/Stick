@@ -65,6 +65,23 @@ jobs:
             "$zipHash  Stick-update.zip"
           ) | Set-Content dist/SHA256SUMS.txt -Encoding ascii
 
+          $tag = "v" + (Get-Content dist/version.txt -Raw)
+          $assetName = 'Stick-update.zip'
+          @{
+            tag_name = $tag
+            assets = @(@{
+              name = $assetName
+              browser_download_url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$assetName"
+              size = (Get-Item dist/Stick-update.zip).Length
+              digest = "sha256:$zipHash"
+            })
+          } | ConvertTo-Json -Depth 4 | Set-Content dist/update-manifest.json -Encoding utf8NoBOM
+
+      - name: Verify installable update package
+        env:
+          STICK_BUILD_VERSION: ${{ steps.meta.outputs.version }}.${{ github.run_number }}
+        run: cargo test packaged_release_stages_the_exact_built_executable -- --ignored
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -86,8 +103,10 @@ jobs:
           body_path: RELEASE_NOTES.md
           prerelease: false
           make_latest: true
+          fail_on_unmatched_files: true
           files: |
             dist/Stick.exe
             dist/Stick-update.zip
+            dist/update-manifest.json
             dist/version.txt
             dist/SHA256SUMS.txt

@@ -42,6 +42,11 @@ fn validate_port(value: &str) -> Result<(), &'static str> {
     match value.parse::<u16>() { Ok(port) if port > 0 => Ok(()), _ => Err("Invalid TCP port") }
 }
 
+pub fn invitation_endpoint<'a>(custom: &'a str, remote: Option<&'a str>, lan: &'a str) -> &'a str {
+    let custom = custom.trim();
+    if custom.is_empty() { remote.unwrap_or(lan) } else { custom }
+}
+
 pub fn make_invite(address: &str, code: &str, animation: bool) -> Result<String, &'static str> {
     let address = validate_endpoint(address)?;
     if code.len() != 8 || !code.bytes().all(|c| c.is_ascii_digit()) {
@@ -77,6 +82,15 @@ pub fn parse_invite(value: &str) -> Result<RoomInvite, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invitations_prefer_explicit_then_remote_then_local() {
+        let lan = "192.168.1.4:47554";
+        let remote = "100.75.1.3:47554";
+        assert_eq!(invitation_endpoint(" ", Some(remote), lan), remote);
+        assert_eq!(invitation_endpoint("", None, lan), lan);
+        assert_eq!(invitation_endpoint(" example.org:4000 ", Some(remote), lan), "example.org:4000");
+    }
 
     #[test]
     fn round_trip_without_secret() {

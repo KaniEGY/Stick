@@ -172,10 +172,13 @@ pub fn smoothed_path(points: &[StrokePoint]) -> Vec<Point> {
 /// have exact corners. The saved editable nodes are never changed.
 pub fn smoothed_ink_path(points: &[StrokePoint]) -> Vec<Point> {
     if points.is_empty()
-        || points.len() > MAX_CONTROL_POINTS
         || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite())
     {
         return Vec::new();
+    }
+    // Preserve the complete saved centerline when subdivision would be too expensive.
+    if points.len() > MAX_CONTROL_POINTS {
+        return points.iter().map(|p| (p.x, p.y)).collect();
     }
     let closed=points.len()>3 && distance(
         (points[0].x,points[0].y),
@@ -221,13 +224,13 @@ pub fn smoothed_ink_path(points: &[StrokePoint]) -> Vec<Point> {
         if i==0 {dense.push(p);continue;}
         let a=*dense.last().unwrap();
         let len=distance(a,p);
-        let steps=((len/3.0).ceil() as usize).clamp(1,16);
+        let remaining = path.len() - i - 1 + usize::from(closed);
+        let available = MAX_RENDER_SAMPLES - dense.len() - remaining;
+        let steps = ((len / 3.0).ceil() as usize).clamp(1, 16).min(available);
         for j in 1..=steps {
             let t=j as f32/steps as f32;
-            dense.push((a.0+(p.0-a.0)*t,a.1+(p.1-a.1)*t));
-            if dense.len()>=MAX_RENDER_SAMPLES {break;}
+            dense.push(if j == steps { p } else { (a.0+(p.0-a.0)*t,a.1+(p.1-a.1)*t) });
         }
-        if dense.len()>=MAX_RENDER_SAMPLES {break;}
     }
     if closed && !dense.is_empty() && dense.last()!=dense.first() {
         dense.push(dense[0]);
@@ -536,6 +539,17 @@ mod tests {
         let mut capped = path.clone();
         extend_square_caps(&mut capped, 8.);
         assert_eq!(capped, path);
+    }
+
+    #[test]
+    fn vector_ink_keeps_the_last_node_on_long_strokes() {
+        for count in [MAX_CONTROL_POINTS, MAX_CONTROL_POINTS + 1] {
+            let points: Vec<_> = (0..count).map(|i| p(i as f32 * 64.0, 1.0)).collect();
+            let path = smoothed_ink_path(&points);
+            assert_eq!(path.first(), Some(&(0.0, 1.0)));
+            assert_eq!(path.last(), Some(&(points[count - 1].x, 1.0)));
+            assert!(path.len() <= MAX_RENDER_SAMPLES);
+        }
     }
 
     #[test]

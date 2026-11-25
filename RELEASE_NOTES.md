@@ -1,4 +1,11 @@
-# Stick v4.1.1 — Pose rig locking and independent canvas/layer backgrounds (2026-11-25)
+# Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
+
+- Update checks can use the official release manifest when the GitHub API is unavailable. Reopening the updater keeps the current download. Windows packaging checks the archive against the built executable.
+- Long Vector Ink strokes retain their endpoints, and taps match the vector line width. Fully transparent strokes no longer create Bucket boundaries. GIF frame delays follow the project timing at common animation frame rates.
+- Host invitations prefer the detected Tailscale address. Both devices need access to the same tailnet. Manual endpoints and LAN invitations remain available.
+- زر التحديث بيكمّل التحميل لو فتحت نافذته تاني، ويقدر يقرأ بيانات الإصدار من ملف مرفق بالإصدار لو واجهة GitHub مش متاحة. اتصلّح اختفاء نهاية خط حبر الفيكتور، وحدود الدلو الوهمية، وتوقيت فريمات GIF. دعوة الأونلاين بتختار عنوان Tailscale لو متصل على الجهازين.
+
+## Previous changes
 
 - The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.
 - Successful exports now show a **folder button** beside **Done / تم** that opens the folder containing the exported file.

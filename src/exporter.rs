@@ -728,10 +728,17 @@ fn export_batch_size(project: &AniProject) -> usize {
         .min(8)
 }
 
+// GIF stores whole centiseconds. Round frame boundaries so errors don't accumulate.
+fn gif_delay_ms(frame: usize, fps: u32) -> u32 {
+    let fps = u64::from(fps.clamp(1, 100));
+    let boundary = |n: u64| (n * 100 + fps / 2) / fps;
+    let start = (frame - 1) as u64;
+    ((boundary(start + 1) - boundary(start)) * 10) as u32
+}
+
 pub fn export_instant_gif(project: &AniProject, out_path: &Path, bg_rgba: [u8; 4]) -> Result<(), String> {
     crate::persistence::validate_project_bounds(project)?;
     let fps = project.fps.max(1);
-    let delay_ms = (1000 / fps).max(15);
     let file = BufWriter::new(fs::File::create(out_path).map_err(|e| e.to_string())?);
     let mut encoder = GifEncoder::new_with_speed(file, 10);
     encoder.set_repeat(Repeat::Infinite).map_err(|e| e.to_string())?;
@@ -740,11 +747,13 @@ pub fn export_instant_gif(project: &AniProject, out_path: &Path, bg_rgba: [u8; 4
         let images: Vec<RgbaImage> = batch.par_iter().map(|&(frame, _)| {
             pixmap_to_rgba_image(&render_frame_pixmap(project, frame, false, bg_rgba))
         }).collect();
-        for (img, &(_, repeats)) in images.into_iter().zip(batch) {
-            for _ in 0..repeats.saturating_sub(1) {
+        for (img, &(start, repeats)) in images.into_iter().zip(batch) {
+            for frame_idx in start..start + repeats - 1 {
+                let delay_ms = gif_delay_ms(frame_idx, fps);
                 let frame = Frame::from_parts(img.clone(), 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
                 encoder.encode_frame(frame).map_err(|e| e.to_string())?;
             }
+            let delay_ms = gif_delay_ms(start + repeats - 1, fps);
             let frame = Frame::from_parts(img, 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
             encoder.encode_frame(frame).map_err(|e| e.to_string())?;
         }
@@ -902,6 +911,14 @@ pub fn extract_video_frames(video_path: &Path, fps: u32, max_frames: usize) -> R
 #[cfg(test)]
 mod layer_opacity_tests {
     use super::*;
+
+    #[test]
+    fn gif_timing_preserves_a_second_at_fractional_tick_rates() {
+        for fps in [12, 24, 30, 60] {
+            let delays = (1..=fps as usize).map(|frame| gif_delay_ms(frame, fps));
+            assert_eq!(delays.sum::<u32>(), 1000);
+        }
+    }
 
     #[test]
     fn sprite_sheet_limits_are_checked_before_allocating() {

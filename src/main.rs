@@ -2677,6 +2677,8 @@ impl StickApp {
                         if create.clicked() {
                             self.online_page = OnlinePage::CreateRoom;
                             self.online_message.clear();
+                            self.online_share_address.clear();
+                            self.refresh_online_rooms();
                         }
                         ui.add_space(10.0);
                         let join=online_action_card(
@@ -4916,6 +4918,10 @@ impl StickApp {
 
     fn check_for_updates(&mut self, ctx: egui::Context) {
         self.show_update_dialog = true;
+        if matches!(*self.update_state.lock().unwrap_or_else(|e| e.into_inner()),
+            UpdateState::Checking | UpdateState::Downloading { .. } | UpdateState::ReadyToRestart { .. }) {
+            return;
+        }
         *self.update_state.lock().unwrap_or_else(|poison| poison.into_inner()) = UpdateState::Checking;
         let state = Arc::clone(&self.update_state);
         let installed = self.installed_version.clone();
@@ -4946,6 +4952,10 @@ impl StickApp {
     }
 
     fn download_and_apply_update(&mut self, info: updater::ReleaseInfo, ctx: egui::Context) {
+        if matches!(*self.update_state.lock().unwrap_or_else(|e| e.into_inner()),
+            UpdateState::Checking | UpdateState::Downloading { .. } | UpdateState::ReadyToRestart { .. }) {
+            return;
+        }
         if self.has_unsaved_changes || self.current_stroke.is_some() {
             self.project_notice_title = tr_notice(self.config.lang, "Save your work first", "احفظ شغلك الأول");
             self.project_notice_body = tr_notice(
@@ -7765,15 +7775,24 @@ impl eframe::App for StickApp {
                             ui.set_min_width(365.0);
                             ui.strong(tr(lang,"Share an invitation without your room password",
                                 "شارك دعوة الغرفة من غير كلمة السر"));
+                            let remote = self.online_remote_info.as_ref()
+                                .filter(|info| info.connected)
+                                .and_then(|info| info.address)
+                                .map(|ip| format!("{}:{}", ip, collab::TCP_PORT));
                             ui.add(egui::TextEdit::singleline(&mut self.online_share_address)
                                 .desired_width(340.0)
-                                .hint_text(format!("{} (LAN)",address)));
+                                .hint_text(remote.as_deref().unwrap_or(&address)));
                             ui.small(tr(lang,
                                 "Use a reachable LAN address, ZeroTier/Tailscale IPv4 or public IPv4/DNS. For Internet direct connections, TCP 47554 must be reachable.",
                                 "اكتب عنوان LAN أو عنوان ZeroTier/Tailscale أو IP عام/DNS. للاتصال من الإنترنت لازم TCP 47554 يكون مفتوح وقابل للوصول."));
-                            let target=if self.online_share_address.trim().is_empty(){
-                                address.as_str()
-                            } else {self.online_share_address.trim()};
+                            if remote.is_some() {
+                                ui.small(tr(lang, "Default invitation uses Tailscale. Both devices need access to the same tailnet.",
+                                    "الدعوة التلقائية بتستخدم Tailscale. لازم الجهازين يقدروا يتواصلوا على نفس شبكة Tailscale."));
+                                if ui.button(tr(lang, "Use LAN address", "استخدم عنوان الشبكة المحلية")).clicked() {
+                                    self.online_share_address = address.clone();
+                                }
+                            }
+                            let target = online_invite::invitation_endpoint(&self.online_share_address, remote.as_deref(), &address);
                             match online_invite::make_invite(target,&code,
                                 self.online_mode==OnlineMode::Animation) {
                                 Ok(invite)=>{
@@ -10784,13 +10803,13 @@ impl eframe::App for StickApp {
                         ActiveToolUI::Bucket if pointer_pressed => {
                             let reference_strokes: Vec<Stroke> = if self.bucket_reference_only {
                                 self.project.layers.iter()
-                                    .filter(|layer|layer.visible && !layer.is_guide && layer.is_reference)
+                                    .filter(|layer|layer.visible && layer.opacity > 0.0 && !layer.is_guide && layer.is_reference)
                                     .flat_map(|layer|
                                         self.project.evaluate_layer_at_frame(layer,self.current_frame).strokes)
                                     .collect()
                             } else if self.bucket_reference_all_layers {
                                 self.project.layers.iter()
-                                    .filter(|layer| layer.visible && !layer.is_guide)
+                                    .filter(|layer| layer.visible && layer.opacity > 0.0 && !layer.is_guide)
                                     .flat_map(|layer|
                                         self.project.evaluate_layer_at_frame(layer, self.current_frame).strokes)
                                     .collect()

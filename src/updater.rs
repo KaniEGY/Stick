@@ -65,10 +65,9 @@ pub fn parse_latest_release(json: &Value, current: &str) -> Result<Option<Releas
         .ok_or("The newer release has no Stick update package.")?;
     let url = asset.get("browser_download_url").and_then(Value::as_str)
         .ok_or("The release download URL is missing.")?;
-    let is_official_package = url.starts_with(RELEASE_URL_PREFIX)
-        && (url.ends_with("/Stick-update.zip") || url.ends_with("/Stick.exe"));
-    if !is_official_package {
-        return Err("The release download is not an official Stick GitHub asset.".into());
+    let name = asset.get("name").and_then(Value::as_str).unwrap_or("");
+    if url != format!("{RELEASE_URL_PREFIX}{tag}/{name}") {
+        return Err("The download must belong to the selected official Stick release.".into());
     }
     let digest = asset.get("digest").and_then(Value::as_str)
         .and_then(|v| v.strip_prefix("sha256:"))
@@ -155,12 +154,26 @@ pub fn check_online(installed: &str) -> Result<Option<ReleaseInfo>, String> {
                 Ok(json) => parse_latest_release_list(&json, installed).map_err(|fallback_error| {
                     format!("Latest-release check failed ({primary_error}); fallback validation failed ({fallback_error}).")
                 }),
-                Err(fallback_error) => Err(format!(
-                    "Couldn't check for Stick updates. GitHub's update service is temporarily unavailable. {primary_error} {fallback_error} Please try again in a moment."
-                )),
+                Err(fallback_error) => check_packaged_manifest(installed).map_err(|manifest_error| {
+                    format!("Update check failed: {primary_error} {fallback_error} {manifest_error}")
+                }),
             }
         }
     }
+}
+
+// Release assets remain accessible independently of the anonymous GitHub API quota.
+fn check_packaged_manifest(installed: &str) -> Result<Option<ReleaseInfo>, String> {
+    const URL: &str = "https://github.com/KaniEGY/Stick/releases/latest/download/update-manifest.json";
+    let response = std::process::Command::new("curl.exe")
+        .args(["--fail", "--silent", "--show-error", "--location", "--proto", "=https",
+            "--proto-redir", "=https", "--max-time", "25", "--max-filesize", "16384", URL])
+        .output().map_err(|e| format!("Release manifest download: {e}"))?;
+    if !response.status.success() || response.stdout.len() > 16_384 {
+        return Err("The packaged release manifest is unavailable.".into());
+    }
+    let manifest = serde_json::from_slice(&response.stdout).map_err(|e| format!("Release manifest: {e}"))?;
+    parse_latest_release(&manifest, installed)
 }
 
 #[derive(Clone, Debug)]
@@ -392,6 +405,11 @@ pub fn download_verified_with_progress<F: FnMut(u64, u64)>(
         return Err(error);
     }
 
+    stage_verified_package(info, &package_tmp, &extracted_tmp, &staged)?;
+    Ok(staged)
+}
+
+fn stage_verified_package(info: &ReleaseInfo, package_tmp: &Path, extracted_tmp: &Path, staged: &Path) -> Result<(), String> {
     let prepare_result = if info.url.ends_with("/Stick-update.zip") {
         (|| -> Result<(), String> {
             let package = std::fs::File::open(&package_tmp)
@@ -449,13 +467,19 @@ pub fn download_verified_with_progress<F: FnMut(u64, u64)>(
     }
     std::fs::rename(&extracted_tmp, &staged)
         .map_err(|e| format!("Couldn't prepare the update for restart: {e}"))?;
-    Ok(staged)
+    Ok(())
 }
 
 /// Spawn a separate updater that waits for this executable to exit, swaps it,
 /// rolls back if replacement fails, writes version.txt, and starts Stick again.
 /// The arguments are separate process args, not interpolated into PowerShell.
 pub fn spawn_replacer(current_exe: &Path, staged: &Path, new_version: &str) -> Result<(), String> {
+    launch_replacer(current_exe, staged, new_version, std::process::id()).map(|_| ())
+}
+
+fn launch_replacer(current_exe: &Path, staged: &Path, new_version: &str, parent_pid: u32)
+    -> Result<std::process::Child, String>
+{
     let _ = version_parts(new_version)?;
     if !staged.is_file() {
         return Err("The downloaded update file is missing.".into());
@@ -482,7 +506,15 @@ try {
     if (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) { throw 'The previous Stick process did not close.' }
     if (-not (Test-Path -LiteralPath $StagedExe)) { throw 'The staged update is missing.' }
     if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }
-    Move-Item -LiteralPath $CurrentExe -Destination $backup -Force
+    for ($attempt = 0; ; $attempt++) {
+        try {
+            [System.IO.File]::Move($CurrentExe, $backup)
+            break
+        } catch [System.IO.IOException] {
+            if ($attempt -ge 39) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    }
     try {
         Move-Item -LiteralPath $StagedExe -Destination $CurrentExe -Force
         [System.IO.File]::WriteAllText($versionPath, $Version)
@@ -507,10 +539,9 @@ try {
         .arg("-CurrentExe").arg(current_exe)
         .arg("-StagedExe").arg(staged)
         .arg("-Version").arg(new_version)
-        .arg("-ParentPid").arg(std::process::id().to_string())
+        .arg("-ParentPid").arg(parent_pid.to_string())
         .spawn()
-        .map_err(|e| format!("Couldn't start the update restarter: {e}"))?;
-    Ok(())
+        .map_err(|e| format!("Couldn't start the update restarter: {e}"))
 }
 
 #[cfg(test)]
@@ -666,6 +697,52 @@ mod tests {
         bad_hash.sha256="0".repeat(64);
         assert!(verify_downloaded_package(&bad_hash,&path).unwrap_err().contains("SHA-256"));
         let _=std::fs::remove_file(path);
+    }
+
+    #[test]
+    #[ignore = "runs in Windows CI after packaging the real release"]
+    fn packaged_release_stages_the_exact_built_executable() {
+        let dist = Path::new("dist");
+        let manifest = std::fs::read(dist.join("update-manifest.json")).unwrap();
+        let info = parse_latest_release(&serde_json::from_slice(&manifest).unwrap(), "0.0").unwrap().unwrap();
+        assert_eq!(info.version, std::fs::read_to_string(dist.join("version.txt")).unwrap());
+        assert_eq!(info.version, embedded_build_version());
+        let dir = std::env::temp_dir().join(format!("Stick package test {}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let package = dir.join("package.download");
+        let staged = dir.join("Stick_new.exe");
+        std::fs::copy(dist.join(RELEASE_ZIP_NAME), &package).unwrap();
+        verify_downloaded_package(&info, &package).unwrap();
+        stage_verified_package(&info, &package, &dir.join("extract.tmp"), &staged).unwrap();
+        assert_eq!(std::fs::read(staged).unwrap(), std::fs::read(dist.join(RELEASE_EXE_NAME)).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_helper_replaces_a_closed_program_in_a_path_with_spaces() {
+        // where.exe exits immediately with no arguments, so this exercises relaunch without a GUI.
+        let probe = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/where.exe");
+        let mut previous = std::process::Command::new(&probe).spawn().unwrap();
+        previous.wait().unwrap();
+        let dir = std::env::temp_dir().join(format!("Stick swap test {}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let current = dir.join("Stick.exe");
+        let staged = dir.join("Stick_new.exe");
+        std::fs::write(&current, b"old build").unwrap();
+        std::fs::copy(&probe, &staged).unwrap();
+        let mut helper = launch_replacer(&current, &staged, "4.1.1.999", previous.id()).unwrap();
+        assert!(helper.wait().unwrap().success());
+        assert_eq!(std::fs::read_to_string(dir.join("version.txt")).unwrap(), "4.1.1.999");
+        assert_eq!(std::fs::read(dir.join("Stick_previous.exe")).unwrap(), b"old build");
+        assert_eq!(std::fs::read(&current).unwrap(), std::fs::read(probe).unwrap());
+        assert!(!staged.exists());
+        // The newly launched probe may briefly hold the executable open.
+        for _ in 0..40 {
+            if std::fs::remove_dir_all(&dir).is_ok() { return; }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test] fn reject_html_disguised_as_executable() {

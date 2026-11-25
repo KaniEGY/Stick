@@ -50,7 +50,7 @@ pub fn visit_round_marks(stroke: &Stroke, mut paint: impl FnMut(RoundMark, f32))
         let width = stroke.base_width * size;
         if stroke.points.len() == 1 {
             let mut dab = dab_for(first, width);
-            if stroke.brush_preset == KritaBrushPreset::Fineliner {
+            if stroke.is_vector || stroke.brush_preset == KritaBrushPreset::Fineliner {
                 dab.radius = (0.5 * width).max(0.25);
             } else if !stroke.is_vector && stroke.brush_preset == KritaBrushPreset::ChiselMarker {
                 dab.radius = (0.5 * width * 0.68).max(0.25);
@@ -691,6 +691,20 @@ mod tests {
         visit_round_marks(&s,|mark,_|if let RoundMark::Line{width}=mark {widths.push(width)});
         assert_eq!(widths,vec![8.]);
     }
+    #[test]
+    fn vector_ink_tap_matches_constant_width_line() {
+        let stroke = Stroke {
+            points: vec![point(10., 10., 0.1)], base_width: 8., is_vector: true,
+            color: [0,0,0,255], fill_color: None, opacity: 1., brush_texture_id: None,
+            brush_preset: KritaBrushPreset::SmoothInk, tip_shape: BrushTipShape::Round,
+        };
+        let mut radii = Vec::new();
+        visit_round_marks(&stroke, |mark, _| {
+            if let RoundMark::Dot(dab) = mark { radii.push(dab.radius); }
+        });
+        assert_eq!(radii, vec![4.]);
+    }
+
     #[test]
     fn variable_pressure_gpen_prefers_one_continuous_fitted_outline() {
         let s=Stroke {
