@@ -34,7 +34,7 @@ pub fn apply_layer_action(
     }
     match action {
         LayerAction::Delete => {
-            if project.layers.len() <= 1 {
+            if project.layers.iter().filter(|layer| !layer.is_pose_rig).count() <= 1 {
                 return Err("A project must keep at least one layer.");
             }
             if project.layers[index].locked {
