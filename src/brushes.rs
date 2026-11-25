@@ -618,11 +618,7 @@ pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
         };
         let project_points = || {
             if stroke.is_vector || stroke.brush_preset == KritaBrushPreset::Fineliner {
-                let mut path = if stroke.is_vector && stroke.brush_preset == KritaBrushPreset::SmoothInk {
-                    crate::vector_path::smoothed_ink_path(&stroke.points)
-                } else {
-                    crate::vector_path::smoothed_path(&stroke.points)
-                };
+                let mut path = crate::vector_path::vector_centerline(stroke);
                 if stroke.tip_shape == BrushTipShape::Square {
                     crate::vector_path::extend_square_caps(&mut path, width);
                 }

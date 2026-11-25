@@ -172,10 +172,13 @@ pub fn smoothed_path(points: &[StrokePoint]) -> Vec<Point> {
 /// have exact corners. The saved editable nodes are never changed.
 pub fn smoothed_ink_path(points: &[StrokePoint]) -> Vec<Point> {
     if points.is_empty()
-        || points.len() > MAX_CONTROL_POINTS
         || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite())
     {
         return Vec::new();
+    }
+    // Preserve the complete saved centerline when subdivision would be too expensive.
+    if points.len() > MAX_CONTROL_POINTS {
+        return points.iter().map(|p| (p.x, p.y)).collect();
     }
     let closed=points.len()>3 && distance(
         (points[0].x,points[0].y),
@@ -221,13 +224,13 @@ pub fn smoothed_ink_path(points: &[StrokePoint]) -> Vec<Point> {
         if i==0 {dense.push(p);continue;}
         let a=*dense.last().unwrap();
         let len=distance(a,p);
-        let steps=((len/3.0).ceil() as usize).clamp(1,16);
+        let remaining = path.len() - i - 1 + usize::from(closed);
+        let available = MAX_RENDER_SAMPLES - dense.len() - remaining;
+        let steps = ((len / 3.0).ceil() as usize).clamp(1, 16).min(available);
         for j in 1..=steps {
             let t=j as f32/steps as f32;
-            dense.push((a.0+(p.0-a.0)*t,a.1+(p.1-a.1)*t));
-            if dense.len()>=MAX_RENDER_SAMPLES {break;}
+            dense.push(if j == steps { p } else { (a.0+(p.0-a.0)*t,a.1+(p.1-a.1)*t) });
         }
-        if dense.len()>=MAX_RENDER_SAMPLES {break;}
     }
     if closed && !dense.is_empty() && dense.last()!=dense.first() {
         dense.push(dense[0]);
@@ -279,6 +282,14 @@ pub fn quick_edit_node_prefer_selection(
     quick_edit_node(strokes,x,y,tolerance)
 }
 
+pub fn vector_centerline(stroke: &Stroke) -> Vec<Point> {
+    if stroke.is_vector && stroke.brush_preset == crate::project::KritaBrushPreset::SmoothInk {
+        smoothed_ink_path(&stroke.points)
+    } else {
+        smoothed_path(&stroke.points)
+    }
+}
+
 pub fn quick_edit_node_in_selection(
     strokes: &mut [Stroke], selected_strokes: &[usize],
     x: f32, y: f32, tolerance: f32,
@@ -324,7 +335,7 @@ pub fn quick_edit_node_in_selection(
     let mut nearest_segment: Option<(usize,usize,f32,f32,f32,f32)> = None;
     for (si,stroke) in strokes.iter().enumerate()
         .filter(|(si,s)|s.is_vector && (selected_strokes.is_empty() || selected_strokes.contains(si))) {
-        let rendered=smoothed_path(&stroke.points);
+        let rendered=vector_centerline(stroke);
         let mut nearest_visible:Option<(f32,f32,f32)>=None;
         for pair in rendered.windows(2) {
             let a=StrokePoint{x:pair[0].0,y:pair[0].1,pressure:1.0};
@@ -448,6 +459,16 @@ mod tests {
     }
 
     #[test]
+    fn quick_edit_hits_the_rounded_vector_ink_corner() {
+        let mut stroke = vector(&[(0.,0.),(100.,0.),(100.,100.)]);
+        stroke.brush_preset = crate::project::KritaBrushPreset::SmoothInk;
+        let path = smoothed_ink_path(&stroke.points);
+        let &(x,y) = path.iter().find(|&&(x,y)| x < 95. && y > 5.).unwrap();
+        let mut strokes = [stroke];
+        assert!(matches!(quick_edit_node(&mut strokes,x,y,1.), Some(QuickNodeEdit::Inserted { .. })));
+    }
+
+    #[test]
     fn quick_node_edit_falls_back_to_visible_unselected_vector() {
         let mut strokes=vec![
             vector(&[(0.,0.),(80.,0.)]),
@@ -536,6 +557,17 @@ mod tests {
         let mut capped = path.clone();
         extend_square_caps(&mut capped, 8.);
         assert_eq!(capped, path);
+    }
+
+    #[test]
+    fn vector_ink_keeps_the_last_node_on_long_strokes() {
+        for count in [MAX_CONTROL_POINTS, MAX_CONTROL_POINTS + 1] {
+            let points: Vec<_> = (0..count).map(|i| p(i as f32 * 64.0, 1.0)).collect();
+            let path = smoothed_ink_path(&points);
+            assert_eq!(path.first(), Some(&(0.0, 1.0)));
+            assert_eq!(path.last(), Some(&(points[count - 1].x, 1.0)));
+            assert!(path.len() <= MAX_RENDER_SAMPLES);
+        }
     }
 
     #[test]

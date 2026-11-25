@@ -567,7 +567,19 @@ fn unit_noise(mut x:u32)->f32{
 // Importers
 // -------------------------------------------------------------------------------------------------
 
+// Bound compressed input and aggregate expanded archive data before allocating.
+const MAX_BRUSH_INPUT_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_BRUSH_MEMBER_BYTES: u64 = 128 * 1024 * 1024;
+
+fn check_brush_input(path: &Path) -> Result<(), String> {
+    if fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_BRUSH_INPUT_BYTES {
+        return Err("Brush file exceeds the 512 MiB import limit.".into());
+    }
+    Ok(())
+}
+
 pub fn import_file(path:&Path)->Result<Vec<ImportedBrushDraft>,String>{
+    check_brush_input(path)?;
     let ext=path.extension().and_then(|s|s.to_str()).unwrap_or("").to_ascii_lowercase();
     let direct=match ext.as_str() {
         ext if tip_image_format(ext).is_some()=>return import_image(path),
@@ -971,6 +983,8 @@ pub fn import_file_with_resource(
     path:&Path,
     resource:&Path,
 )->Result<Vec<ImportedBrushDraft>,String>{
+    check_brush_input(path)?;
+    check_brush_input(resource)?;
     let required=required_krita_resource(path)
         .ok_or("This brush does not request an external Krita brush tip.")?;
     let selected_name=resource.file_name().and_then(|s|s.to_str()).unwrap_or("");
@@ -1247,12 +1261,17 @@ fn import_krita_bundle(path:&Path)->Result<Vec<ImportedBrushDraft>,String>{
     // Read the bundle once so every .kpp can resolve its sibling brush
     // resources (GBR/GIH/images) from the same archive.
     let mut entries=Vec::<(String,Vec<u8>)>::new();
+    let mut expanded = 0u64;
     for i in 0..zip.len() {
         let mut file=zip.by_index(i).map_err(|e|e.to_string())?;
         if file.is_dir(){continue}
         let name=file.name().replace('\\',"/");
+        let remaining = MAX_BRUSH_INPUT_BYTES.saturating_sub(expanded).min(MAX_BRUSH_MEMBER_BYTES);
+        if file.size() > remaining { return Err("Krita bundle exceeds safe expanded size.".into()); }
         let mut data=Vec::new();
-        file.read_to_end(&mut data).map_err(|e|e.to_string())?;
+        file.by_ref().take(remaining + 1).read_to_end(&mut data).map_err(|e|e.to_string())?;
+        if data.len() as u64 > remaining { return Err("Krita bundle exceeds safe expanded size.".into()); }
+        expanded += data.len() as u64;
         entries.push((name,data));
     }
 
@@ -1445,7 +1464,10 @@ fn import_sutg_file(path:&Path)->Result<Vec<ImportedBrushDraft>,String>{
             if out.len()>=MAX_IMPORT_BRUSHES{break}
             let mut f=zip.by_index(i).map_err(|e|e.to_string())?;
             if !f.name().to_ascii_lowercase().ends_with(".sut"){continue}
-            let mut buf=Vec::new();f.read_to_end(&mut buf).map_err(|e|e.to_string())?;
+            if f.size() > MAX_BRUSH_MEMBER_BYTES { return Err("Clip Studio brush archive member too large.".into()); }
+            let mut buf=Vec::new();
+            f.by_ref().take(MAX_BRUSH_MEMBER_BYTES + 1).read_to_end(&mut buf).map_err(|e|e.to_string())?;
+            if buf.len() as u64 > MAX_BRUSH_MEMBER_BYTES { return Err("Clip Studio brush archive member too large.".into()); }
             let temp=std::env::temp_dir().join(format!("stick_sutg_{}_{}.sut",std::process::id(),i));
             fs::write(&temp,&buf).map_err(|e|e.to_string())?;
             if let Ok(mut brushes)=import_sut_file(&temp) {

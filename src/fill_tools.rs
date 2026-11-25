@@ -98,7 +98,7 @@ pub fn preserve_nested_holes(
     if outer.len()<4 {return outer;}
     let mut candidates:Vec<(Vec<StrokePoint>,f32,(f32,f32),f32)>=Vec::new();
     for stroke in strokes {
-        if stroke.color[3]==0 {continue;}
+        if stroke.color[3] == 0 || stroke.opacity <= 0.0 { continue; }
         let Some(ring)=closed_outline(stroke) else {continue};
         if contour_contains(stroke,seed.0,seed.1) {continue;}
         let unique=if ring.len()>1
@@ -192,7 +192,8 @@ pub fn contour_contains(stroke: &Stroke, x: f32, y: f32) -> bool {
 
 pub fn find_topmost_shape(strokes: &[Stroke], x: f32, y: f32) -> Option<usize> {
     strokes.iter().enumerate().rev().find_map(|(idx, s)| {
-        contour_contains(s, x, y).then_some(idx)
+        (s.opacity > 0.0 && (s.color[3] > 0 || s.fill_color.is_some_and(|c| c[3] > 0))
+            && contour_contains(s, x, y)).then_some(idx)
     })
 }
 
@@ -209,7 +210,7 @@ pub fn linked_closed_contour(strokes: &[Stroke], x: f32, y: f32) -> Option<Vec<S
 
     let valid = |s: &Stroke| s.points.len() >= 2 && s.points.len() <= 8_192
         && s.points.iter().all(|p| p.x.is_finite() && p.y.is_finite())
-        && s.fill_color.is_none();
+        && s.opacity > 0.0 && s.color[3] > 0 && s.fill_color.is_none();
 
     for (start_index, start) in strokes.iter().enumerate() {
         if !valid(start) { continue; }
@@ -381,7 +382,7 @@ pub fn flood_fill_polygon_with_options(
         if stroke.points.len() < 2 || stroke.points.len() > 40_000 { continue; }
         if stroke.points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) { continue; }
         // Ignore fill-only strokes: they should not block a new fill.
-        if stroke.color[3] == 0 { continue; }
+        if stroke.color[3] == 0 || stroke.opacity <= 0.0 { continue; }
         segment_budget = segment_budget.saturating_add(stroke.points.len());
         if segment_budget > 250_000 { return None; }
         let line_half=stroke.base_width.abs()*0.5;
@@ -704,6 +705,15 @@ mod tests {
         let mut shapes = vec![shape(&[(10.0,10.0),(50.0,10.0),(50.0,50.0),(10.0,50.0)])];
         assert!(!apply_shape_fill(&mut shapes, 30.0, 30.0, [255,0,0,255]));
         assert!(shapes[0].fill_color.is_none());
+    }
+
+    #[test]
+    fn invisible_ink_does_not_create_a_bucket_region() {
+        let mut outline = shape(&[(10.,10.),(80.,10.),(80.,80.),(10.,80.),(10.,10.)]);
+        outline.opacity = 0.0;
+        let strokes = [outline];
+        assert!(!can_fill_contour(&strokes, 45., 45.));
+        assert!(flood_fill_polygon(&strokes, (45.,45.), (100.,100.), 0.).is_none());
     }
 
     #[test]

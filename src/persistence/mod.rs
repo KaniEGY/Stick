@@ -7,6 +7,7 @@ use atomic_save::{create_legacy_backup_copy, save_project_atomic};
 use migration::{decode_and_migrate, MigrationReport};
 use sniff::sniff_project_bytes;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -21,9 +22,17 @@ pub fn open_project_safe(path: &Path) -> Result<LoadedProjectOutcome, String> {
     if !path.exists() {
         return Err(format!("الملف غير موجود: {}", path.display()));
     }
-    let raw = fs::read(path).map_err(|e| format!("تعذر قراءة الملف من القرص: {}", e))?;
+    let file = fs::File::open(path).map_err(|e| format!("تعذر قراءة الملف من القرص: {e}"))?;
+    let limit = sniff::MAX_PROJECT_RAW_BYTES as u64;
+    if file.metadata().map_err(|e| e.to_string())?.len() > limit {
+        return Err("حجم ملف المشروع يتجاوز الحد الأقصى (250MB).".into());
+    }
+    let mut raw = Vec::new();
+    file.take(limit + 1).read_to_end(&mut raw)
+        .map_err(|e| format!("تعذر قراءة الملف من القرص: {e}"))?;
     let sniffed = sniff_project_bytes(&raw)?;
     let (project, report) = decode_and_migrate(sniffed)?;
+    validate_project_bounds(&project)?;
 
     let legacy_backup_path = if report.was_migrated {
         Some(create_legacy_backup_copy(path).map_err(|e| {
@@ -41,6 +50,20 @@ pub fn open_project_safe(path: &Path) -> Result<LoadedProjectOutcome, String> {
         missing_assets,
         legacy_backup_path,
     })
+}
+
+pub(crate) fn validate_project_bounds(project: &AniProject) -> Result<(), String> {
+    let pixels = u64::from(project.width) * u64::from(project.height);
+    if project.width == 0 || project.height == 0
+        || project.width > crate::canvas_sizes::MAX_DIMENSION
+        || project.height > crate::canvas_sizes::MAX_DIMENSION
+        || pixels > crate::canvas_sizes::MAX_PIXELS
+        || project.fps == 0 || project.total_frames == 0
+        || project.layers.is_empty()
+    {
+        return Err("أبعاد أو بيانات المشروع غير صالحة أو تتجاوز حدود الذاكرة الآمنة. لم يتم تعديل ملفك.".into());
+    }
+    Ok(())
 }
 
 pub fn save_project_safe(project: &AniProject, target_path: &Path) -> Result<(), String> {
@@ -73,6 +96,18 @@ pub fn collect_missing_assets(project: &AniProject) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::project::{KritaBrushPreset, Stroke, StrokePoint};
+
+    #[test]
+    fn rejects_unsafe_project_dimensions_without_allocating_canvas() {
+        let mut p = AniProject::default();
+        p.width = u32::MAX;
+        assert!(validate_project_bounds(&p).is_err());
+        p.width = 3840;
+        p.height = 2160;
+        assert!(validate_project_bounds(&p).is_ok());
+        p.fps = 0;
+        assert!(validate_project_bounds(&p).is_err());
+    }
 
     #[test]
     fn cmp_002_legacy_v1_preserves_layers_and_strokes() {

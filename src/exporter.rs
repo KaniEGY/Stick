@@ -440,13 +440,7 @@ fn draw_skia_stroke(pixmap: &mut Pixmap, s: &crate::project::Stroke, ts: Transfo
                 let path = centerline.get_or_insert_with(|| {
                     let mut pb = PathBuilder::new();
                     if s.is_vector || s.brush_preset == crate::project::KritaBrushPreset::Fineliner {
-                        let path = if s.is_vector
-                            && s.brush_preset == crate::project::KritaBrushPreset::SmoothInk
-                        {
-                            crate::vector_path::smoothed_ink_path(&s.points)
-                        } else {
-                            crate::vector_path::smoothed_path(&s.points)
-                        };
+                        let path = crate::vector_path::vector_centerline(s);
                         if let Some(&(x,y)) = path.first() {
                             pb.move_to(x,y);
                             for &(x,y) in path.iter().skip(1) { pb.line_to(x,y); }
@@ -540,6 +534,7 @@ pub fn export_single_image_format(
     format: ImageExportFormat,
     bg_rgba: [u8; 4],
 ) -> Result<(), String> {
+    crate::persistence::validate_project_bounds(project)?;
     let pixmap = render_frame_pixmap(project, frame_idx, format.is_transparent(), bg_rgba);
     if matches!(format, ImageExportFormat::PngTransparent | ImageExportFormat::PngSolid) {
         // tiny-skia writes PNG using straight RGBA (including transparent pixels).
@@ -570,35 +565,43 @@ pub fn export_single_image_format(
 }
 
 pub fn export_transparent_png_sequence(project: &AniProject, folder: &Path) -> Result<usize, String> {
+    crate::persistence::validate_project_bounds(project)?;
     fs::create_dir_all(folder).map_err(|e| format!("Failed to create folder: {}", e))?;
     let total = project.total_frames.max(1);
-    let frames: Vec<usize> = (1..=total).collect();
-
-    frames.par_iter().try_for_each(|&f| {
-        let pixmap = render_frame_pixmap(project, f, true, [255, 255, 255, 255]);
-        let file_path = folder.join(format!("stick_frame_{:04}.png", f));
-        pixmap.save_png(&file_path).map_err(|e| format!("PNG save error: {}", e))
-    })?;
+    let batch_size = export_batch_size(project);
+    for start in (1..=total).step_by(batch_size) {
+        let end = start.saturating_add(batch_size - 1).min(total);
+        (start..=end).into_par_iter().try_for_each(|f| {
+            let pixmap = render_frame_pixmap(project, f, true, [255, 255, 255, 255]);
+            let file_path = folder.join(format!("stick_frame_{:04}.png", f));
+            pixmap.save_png(&file_path).map_err(|e| format!("PNG save error: {}", e))
+        })?;
+    }
 
     Ok(total)
 }
 
+// Keep the historical one-row layout, but refuse huge output before allocation.
+fn sprite_sheet_dimensions(fw: u32, fh: u32, frames: usize) -> Result<(u32,u32), String> {
+    let width = u32::try_from(frames).ok().and_then(|n| fw.checked_mul(n))
+        .filter(|&w| w > 0).ok_or("Sprite Sheet dimensions overflow.")?;
+    let pixels = u64::from(width) * u64::from(fh);
+    if fh == 0 || pixels > 64 * 1024 * 1024 {
+        return Err("Sprite Sheet too large (256 MiB RGBA limit). Export a PNG sequence or use fewer frames.".into());
+    }
+    Ok((width, fh))
+}
+
 pub fn export_sprite_sheet(project: &AniProject, out_path: &Path) -> Result<usize, String> {
+    crate::persistence::validate_project_bounds(project)?;
     let total = project.total_frames.max(1);
-    let fw = project.width.max(1);
-    let fh = project.height.max(1);
-
-    let frames: Vec<RgbaImage> = (1..=total)
-        .into_par_iter()
-        .map(|f| {
-            let pix = render_frame_pixmap(project, f, project.background_transparent, project.background_color);
-            pixmap_to_rgba_image(&pix)
-        })
-        .collect();
-
-    let mut sheet = RgbaImage::new(fw * (total as u32), fh);
-    for (idx, frame_img) in frames.iter().enumerate() {
-        image::imageops::overlay(&mut sheet, frame_img, (idx as i64) * (fw as i64), 0);
+    let fw = project.width;
+    let (width, height) = sprite_sheet_dimensions(fw, project.height, total)?;
+    let mut sheet = RgbaImage::new(width, height);
+    for f in 1..=total {
+        let pix = render_frame_pixmap(project, f, project.background_transparent, project.background_color);
+        let frame = pixmap_to_rgba_image(&pix);
+        image::imageops::replace(&mut sheet, &frame, (f as i64 - 1) * i64::from(fw), 0);
     }
     sheet.save_with_format(out_path, ImageFormat::Png).map_err(|e| e.to_string())?;
     Ok(total)
@@ -719,9 +722,17 @@ fn export_batch_size(project: &AniProject) -> usize {
         .min(8)
 }
 
+// GIF stores whole centiseconds. Round frame boundaries so errors don't accumulate.
+fn gif_delay_ms(frame: usize, fps: u32) -> u32 {
+    let fps = u64::from(fps.clamp(1, 100));
+    let boundary = |n: u64| (n * 100 + fps / 2) / fps;
+    let start = (frame - 1) as u64;
+    ((boundary(start + 1) - boundary(start)) * 10) as u32
+}
+
 pub fn export_instant_gif(project: &AniProject, out_path: &Path, bg_rgba: [u8; 4]) -> Result<(), String> {
+    crate::persistence::validate_project_bounds(project)?;
     let fps = project.fps.max(1);
-    let delay_ms = (1000 / fps).max(15);
     let file = BufWriter::new(fs::File::create(out_path).map_err(|e| e.to_string())?);
     let mut encoder = GifEncoder::new_with_speed(file, 10);
     encoder.set_repeat(Repeat::Infinite).map_err(|e| e.to_string())?;
@@ -730,11 +741,13 @@ pub fn export_instant_gif(project: &AniProject, out_path: &Path, bg_rgba: [u8; 4
         let images: Vec<RgbaImage> = batch.par_iter().map(|&(frame, _)| {
             pixmap_to_rgba_image(&render_frame_pixmap(project, frame, false, bg_rgba))
         }).collect();
-        for (img, &(_, repeats)) in images.into_iter().zip(batch) {
-            for _ in 0..repeats.saturating_sub(1) {
+        for (img, &(start, repeats)) in images.into_iter().zip(batch) {
+            for frame_idx in start..start + repeats - 1 {
+                let delay_ms = gif_delay_ms(frame_idx, fps);
                 let frame = Frame::from_parts(img.clone(), 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
                 encoder.encode_frame(frame).map_err(|e| e.to_string())?;
             }
+            let delay_ms = gif_delay_ms(start + repeats - 1, fps);
             let frame = Frame::from_parts(img, 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
             encoder.encode_frame(frame).map_err(|e| e.to_string())?;
         }
@@ -748,6 +761,7 @@ pub fn export_video_multi_format(
     format: VideoExportFormat,
     bg_rgba: [u8; 4],
 ) -> Result<(), String> {
+    crate::persistence::validate_project_bounds(project)?;
     if format == VideoExportFormat::GifInstant {
         return export_instant_gif(project, output_path, bg_rgba);
     }
@@ -837,45 +851,88 @@ pub fn export_video_multi_format(
     write_result
 }
 
-pub fn extract_video_frames(video_path: &Path, fps: u32) -> Result<Vec<PathBuf>, String> {
+// Every import owns a separate persistent directory: old projects refer to these files.
+fn new_video_import_dir(root: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_nanos();
+    for n in 0..100 {
+        let dir = root.join(format!("video_{}_{}_{}", std::process::id(), stamp, n));
+        match fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("Could not create a unique video import directory.".into())
+}
+
+pub fn extract_video_frames(video_path: &Path, fps: u32, max_frames: usize) -> Result<Vec<PathBuf>, String> {
+    if max_frames == 0 { return Err("The timeline has no room for this video.".into()); }
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
     let ffmpeg_bin = ensure_ffmpeg_installed(&exe_dir)?;
 
-    let out_dir = std::env::temp_dir().join(format!("stick_vid_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&out_dir);
-    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-
-    let pattern = out_dir.join("vid_%04d.png");
-    let status = Command::new(&ffmpeg_bin)
-        .args([
-            "-y",
-            "-i",
-            video_path.to_str().unwrap_or(""),
-            "-vf",
-            &format!("fps={}", fps.max(1)),
-            pattern.to_str().unwrap_or(""),
-        ])
-        .status()
-        .map_err(|_| "Failed to execute FFmpeg.".to_string())?;
-
-    if !status.success() {
-        return Err("Failed to extract video frames.".to_string());
-    }
-
-    let mut files: Vec<PathBuf> = fs::read_dir(&out_dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok().map(|entry| entry.path()))
-        .collect();
-    files.sort();
-    Ok(files)
+    let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir).join("Stick").join("ImportedVideo");
+    let out_dir = new_video_import_dir(&root)?;
+    let result = (|| {
+        let pattern = out_dir.join("vid_%08d.png");
+        let status = Command::new(&ffmpeg_bin)
+            .args(["-y", "-i"]).arg(video_path)
+            .args(["-vf", &format!("fps={}", fps.max(1)), "-frames:v",
+                &max_frames.saturating_add(1).to_string()])
+            .arg(&pattern)
+            .status().map_err(|e| format!("Failed to execute FFmpeg: {e}"))?;
+        if !status.success() { return Err("Failed to extract video frames.".into()); }
+        let mut files: Vec<PathBuf> = fs::read_dir(&out_dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok().map(|entry| entry.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+            .collect();
+        if files.is_empty() || files.len() > max_frames {
+            return Err("Video is empty or exceeds the remaining timeline capacity.".into());
+        }
+        files.sort();
+        Ok(files)
+    })();
+    if result.is_err() { let _ = fs::remove_dir_all(&out_dir); }
+    result
 }
 
 #[cfg(test)]
 mod layer_opacity_tests {
     use super::*;
+
+    #[test]
+    fn gif_timing_preserves_a_second_at_fractional_tick_rates() {
+        for fps in [12, 24, 30, 60] {
+            let delays = (1..=fps as usize).map(|frame| gif_delay_ms(frame, fps));
+            assert_eq!(delays.sum::<u32>(), 1000);
+        }
+    }
+
+    #[test]
+    fn sprite_sheet_limits_are_checked_before_allocating() {
+        assert_eq!(sprite_sheet_dimensions(64,32,10).unwrap(), (640,32));
+        assert!(sprite_sheet_dimensions(u32::MAX,32,2).is_err());
+        assert!(sprite_sheet_dimensions(3840,2160,100).is_err());
+    }
+
+    #[test]
+    fn consecutive_video_imports_keep_previous_frames() {
+        let root = std::env::temp_dir().join(format!("stick_video_import_test_{}_{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let a = new_video_import_dir(&root).unwrap();
+        let frame = a.join("vid_00000001.png");
+        fs::write(&frame, b"first import").unwrap();
+        let b = new_video_import_dir(&root).unwrap();
+        assert_ne!(a,b);
+        assert_eq!(fs::read(frame).unwrap(), b"first import");
+        fs::remove_dir_all(root).unwrap();
+    }
     use crate::project::{KritaBrushPreset, Stroke as ProjectStroke, StrokePoint};
 
     fn project_with_solid_dab(opacity: f32) -> AniProject {
@@ -907,6 +964,25 @@ mod layer_opacity_tests {
             .pixel(24, 24)
             .expect("center pixel")
             .alpha()
+    }
+
+    #[test]
+    fn every_menu_brush_exports_visible_ink_after_project_roundtrip() {
+        use crate::persistence::{atomic_save, migration, sniff};
+        for (preset, _, _) in KritaBrushPreset::MENU {
+            let mut project = project_with_solid_dab(1.0);
+            let stroke = &mut project.layers[0].keyframes.get_mut(&1).unwrap().strokes[0];
+            stroke.brush_preset = preset;
+            stroke.opacity = preset.default_opacity();
+            stroke.points = [(8.,32.,0.35),(24.,12.,0.7),(40.,32.,1.)].into_iter()
+                .map(|(x,y,pressure)| StrokePoint { x,y,pressure }).collect();
+            let render = |p: &AniProject| render_frame_pixmap(p, 1, true, [0;4]);
+            let pixels = render(&project);
+            assert!(pixels.data().chunks_exact(4).any(|rgba| rgba[3] > 0), "{preset:?} was empty");
+            let bytes = atomic_save::serialize_and_compress_project(&project).unwrap();
+            let (loaded, _) = migration::decode_and_migrate(sniff::sniff_project_bytes(&bytes).unwrap()).unwrap();
+            assert_eq!(pixels.data(), render(&loaded).data(), "{preset:?} changed on reopen");
+        }
     }
 
     #[test]

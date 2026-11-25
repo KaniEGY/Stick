@@ -65,6 +65,23 @@ jobs:
             "$zipHash  Stick-update.zip"
           ) | Set-Content dist/SHA256SUMS.txt -Encoding ascii
 
+          $tag = "v" + (Get-Content dist/version.txt -Raw)
+          $assetName = 'Stick-update.zip'
+          @{
+            tag_name = $tag
+            assets = @(@{
+              name = $assetName
+              browser_download_url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$assetName"
+              size = (Get-Item dist/Stick-update.zip).Length
+              digest = "sha256:$zipHash"
+            })
+          } | ConvertTo-Json -Depth 4 | Set-Content dist/update-manifest.json -Encoding utf8NoBOM
+
+      - name: Verify installable update package
+        env:
+          STICK_BUILD_VERSION: ${{ steps.meta.outputs.version }}.${{ github.run_number }}
+        run: cargo test packaged_release_stages_the_exact_built_executable -- --ignored
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -86,8 +103,42 @@ jobs:
           body_path: RELEASE_NOTES.md
           prerelease: false
           make_latest: true
+          fail_on_unmatched_files: true
           files: |
             dist/Stick.exe
             dist/Stick-update.zip
+            dist/update-manifest.json
             dist/version.txt
             dist/SHA256SUMS.txt
+
+      - name: Verify upgrade from the published 4.1.1.432 updater
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          STICK_BUILD_VERSION: '4.1.1.432'
+        run: |
+          git fetch --depth=1 origin tag v4.1.1.432
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force tests | Out-Null
+          git show v4.1.1.432:src/updater.rs | Set-Content tests/legacy_upgrade.rs -Encoding utf8NoBOM
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          #[test]
+          fn published_upgrade_matches_this_build() {
+              let expected = std::fs::read_to_string("dist/version.txt").unwrap();
+              let mut seen = String::new();
+              let info = (0..6).find_map(|attempt| {
+                  if attempt > 0 { std::thread::sleep(Duration::from_secs(5)); }
+                  match check_online(embedded_build_version()) {
+                      Ok(Some(info)) if info.version == expected => Some(info),
+                      result => { seen = format!("{result:?}"); None }
+                  }
+              }).unwrap_or_else(|| panic!("Previous updater could not see {expected}: {seen}"));
+              let temp = std::env::temp_dir().join(format!("Stick live upgrade {}", std::process::id()));
+              std::fs::create_dir(&temp).unwrap();
+              let staged = download_verified_with_progress(&info, &temp.join("Stick.exe"), |_, _| {}).unwrap();
+              assert_eq!(std::fs::read(staged).unwrap(), std::fs::read("dist/Stick.exe").unwrap());
+              std::fs::remove_dir_all(temp).unwrap();
+          }
+          '@ | Add-Content tests/legacy_upgrade.rs -Encoding utf8NoBOM
+          cargo test --test legacy_upgrade published_upgrade_matches_this_build -- --exact

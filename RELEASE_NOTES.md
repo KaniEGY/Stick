@@ -1,4 +1,6 @@
-# Stick v4.1.1 — Pose rig locking and independent canvas/layer backgrounds (2026-11-25)
+# Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
+
+## Previous changes
 
 - The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.
 - Successful exports now show a **folder button** beside **Done / تم** that opens the folder containing the exported file.
@@ -9,6 +11,19 @@
 > **Maintainer checklist:** Update the English and Egyptian Arabic notes for **every new release** before publishing. Never claim features that did not pass tests.
 
 ## English (US)
+
+### Bugs fixed
+- Update checks can use the official packaged manifest when both GitHub API routes are unavailable. Reopening the updater keeps the current download. Windows builds check the archive with Stick's installer.
+- Vector Ink keeps the end of long strokes. Node editing follows the rounded ink path, and a tap matches the pen width. Fully transparent ink no longer creates Bucket boundaries. GIF timing now preserves a full second at 24, 30 and 60 fps.
+- Host invites prefer the available Tailscale address. Both devices need access to the same tailnet. You can also select LAN or enter an explicit endpoint.
+
+### Stability and data protection
+- Imported video frames now use unique persistent folders, preventing a later import from deleting earlier project assets. Oversized clips are rejected instead of silently exceeding timeline capacity.
+- Bound project decompression and file reads before allocation; reject invalid canvas dimensions and overflowing schema numbers.
+- Verify saved project bytes and accurately report failed replacement or recovery, preserving the backup paths.
+- Limit Sprite Sheet memory and PNG sequence parallelism; report export failures in the interface rather than silently doing nothing.
+- Reset stale pose selections and layer settings after undo/redo or switching projects.
+- Limit oversized brush files and expanded Krita/CSP archive entries. Basic Lottie export now explicitly describes its first-frame-only limitation.
 
 ### Pose rig locking and independent canvas/layer backgrounds
 - Locking the Pose Rig layer now blocks joint dragging and pose editing. Unlocking it restores joint manipulation; hiding the rig layer no longer discards its lock state.
@@ -406,6 +421,19 @@
 - Added an unsaved-work guard to avoid restarting with an unfinished project.
 
 ## العربية (المصري)
+
+### المشاكل اللي اتصلحت
+- زر التحديث بيكمّل التحميل لو فتحت نافذته تاني، ويقدر يقرأ بيانات الإصدار من الملف الرسمي المرفق لو واجهة GitHub مش متاحة.
+- خط حبر الفيكتور الطويل بيظهر لآخر نقطة، وتعديل العقد بيتبع المنحنى الظاهر. الدلو بيتجاهل الحبر الشفاف، وتوقيت GIF بقى يحافظ على مدة الحركة عند ٢٤ و٣٠ و٦٠ فريم في الثانية.
+- رابط الدعوة بيختار عنوان Tailscale لو متصل. عشان تدخلوا من شبكتين مختلفتين لازم الجهازين يقدروا يتواصلوا على نفس شبكة Tailscale. تقدر برضه تختار LAN أو تدخل عنوان يدوي.
+
+### تحسين الاستقرار وحماية المشاريع
+- كل فيديو مستورد له مجلد فريمات مستقل ودائم، عشان استيراد فيديو جديد مايمسحش فريمات فيديو قديم. رفض الفيديوهات اللي تتجاوز سعة التايم لاين المتبقية.
+- تطبيق حدود قراءة وفك ضغط المشاريع قبل استهلاك الذاكرة، ورفض الأبعاد وأرقام إصدارات الملفات غير الصالحة.
+- التحقق من تطابق بيانات الحفظ، وإظهار مسار النسخة الاحتياطية لو فشل الاستبدال والاسترجاع.
+- تقليل استهلاك الذاكرة أثناء تصدير Sprite Sheet وسلسلة PNG، وإظهار أخطاء التصدير بدل تجاهلها.
+- تنظيف حالة اختيار الهيكل ونوافذ اللير بعد التراجع أو فتح مشروع آخر.
+- وضع حدود لحجم ملفات الفرش وفك ضغط أرشيفات Krita وCSP، وتوضيح إن تصدير Lottie الحالي مبسط للفريم الأول فقط.
 
 ### قفل هيكل الوضعية وفصل خلفية الكانفا عن خلفية اللير
 - قفل طبقة الهيكل بقى يمنع سحب المفاصل وتعديل الوضعية. لما تفتح القفل تقدر تحرك المفاصل تاني، وإخفاء الهيكل مش بيمسح حالة القفل.

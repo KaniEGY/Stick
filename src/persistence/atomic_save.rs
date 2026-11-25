@@ -29,12 +29,7 @@ pub fn get_recovery_dir() -> PathBuf {
 }
 
 pub fn serialize_and_compress_project(project: &AniProject) -> Result<Vec<u8>, String> {
-    if project.layers.is_empty() {
-        return Err("لا يمكن حفظ مشروع بدون أي طبقة.".to_string());
-    }
-    if project.width == 0 || project.height == 0 || project.fps == 0 {
-        return Err("أبعاد المشروع أو معدل الإطارات (FPS) غير صالح (صفر).".to_string());
-    }
+    super::validate_project_bounds(project)?;
 
     let mut clean_proj = project.clone();
     clean_proj.schema_version = PROJECT_SCHEMA_VERSION;
@@ -66,23 +61,23 @@ pub fn serialize_and_compress_project(project: &AniProject) -> Result<Vec<u8>, S
 pub fn save_project_atomic(project: &AniProject, target_path: &Path) -> Result<(), String> {
     let compressed = serialize_and_compress_project(project)?;
 
-    let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = target_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)
         .map_err(|e| format!("تعذر الوصول إلى مجلد الحفظ '{}': {}", parent.display(), e))?;
 
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     let file_stem = target_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("project.stick");
-    let tmp_path = parent.join(format!(".{}.{}.tmp", file_stem, nonce));
+    let tmp_path = parent.join(format!(".{}.{}.{}.tmp", file_stem, std::process::id(), nonce));
 
     // كتابة إلى الملف المؤقت مع sync_all
     {
-        let mut tmp_file = File::create(&tmp_path)
+        let mut tmp_file = File::options().write(true).create_new(true).open(&tmp_path)
             .map_err(|e| format!("فشل إنشاء الملف المؤقت للحفظ (تحقق من المساحة والصلاحيات): {}", e))?;
         if let Err(e) = tmp_file.write_all(&compressed) {
             let _ = fs::remove_file(&tmp_path);
@@ -103,7 +98,7 @@ pub fn save_project_atomic(project: &AniProject, target_path: &Path) -> Result<(
         let _ = fs::remove_file(&tmp_path);
         format!("فشل التحقق من الملف المؤقت بعد كتابته: {}", e)
     })?;
-    if written_bytes.len() != compressed.len() || sniff_project_bytes(&written_bytes).is_err() {
+    if written_bytes != compressed {
         let _ = fs::remove_file(&tmp_path);
         return Err("تم إلغاء الاستبدال: الملف المؤقت المكتوب على القرص غير مكتمل.".to_string());
     }
@@ -122,7 +117,7 @@ pub fn save_project_atomic(project: &AniProject, target_path: &Path) -> Result<(
     // الاستبدال الآمن المتوافق مع Windows
     if let Err(rename_err) = fs::rename(&tmp_path, target_path) {
         if target_path.exists() {
-            let swap_old = parent.join(format!(".{}.{}.old", file_stem, nonce));
+            let swap_old = parent.join(format!(".{}.{}.{}.old", file_stem, std::process::id(), nonce));
             if fs::rename(target_path, &swap_old).is_ok() {
                 match fs::rename(&tmp_path, target_path) {
                     Ok(_) => {
@@ -131,9 +126,12 @@ pub fn save_project_atomic(project: &AniProject, target_path: &Path) -> Result<(
                     }
                     Err(e2) => {
                         // استرجاع الملف الأصلي فوراً في حال فشل التبديل
-                        let _ = fs::rename(&swap_old, target_path);
+                        let restored = fs::rename(&swap_old, target_path);
                         let _ = fs::remove_file(&tmp_path);
-                        return Err(format!("فشل استبدال الملف الأصلي (تمت استعادة النسخة الأصلية): {}", e2));
+                        return match restored {
+                            Ok(()) => Err(format!("فشل استبدال الملف الأصلي (تمت استعادة النسخة الأصلية): {e2}")),
+                            Err(restore_err) => Err(format!("فشل الاستبدال والاستعادة: {e2}; {restore_err}. النسخة الأصلية محفوظة في {} والاحتياطية في {}.", swap_old.display(), bak_path.display())),
+                        };
                     }
                 }
             }
