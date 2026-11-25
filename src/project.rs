@@ -545,6 +545,9 @@ pub struct Layer {
     pub effect: LayerEffectPreset,
     #[serde(default)]
     pub keyframes: HashMap<usize, FrameData>,
+    /// Optional flat color behind this layer's artwork; None is transparent.
+    #[serde(default)]
+    pub background: Option<[u8; 4]>,
 }
 
 fn default_layer_name() -> String {
@@ -690,7 +693,7 @@ impl Default for AniProject {
                 visible: true,
                 locked: false,
                 is_guide: false,
-                is_pose_rig: false,
+                is_pose_rig: false, background: None,
                 is_reference: false,
                 xp_first_paint_rewarded: false,
                 opacity: 1.0,
@@ -1039,7 +1042,7 @@ pub fn import_adobe_animate_project(path: &Path) -> Result<AniProject, String> {
                 visible: true,
                 locked: false,
                 is_guide: false,
-                is_pose_rig: false,
+                is_pose_rig: false, background: None,
                 is_reference: false,
                 xp_first_paint_rewarded: false,
                 opacity: 1.0,

@@ -53,6 +53,15 @@ impl BodyPreset {
     }
 }
 
+#[derive(Clone,Copy,Debug,Default,Serialize,Deserialize,PartialEq,Eq)]
+pub enum RigShape {
+    #[default]
+    Stick,
+    Rounded,
+    Box,
+    Rectangle,
+}
+
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq)]
 #[serde(default)]
 pub struct PoseGuide {
@@ -91,6 +100,8 @@ pub struct PoseGuide {
     pub right_leg_deg:f32,
     pub left_shin_deg:f32,
     pub right_shin_deg:f32,
+    pub locked:bool,
+    pub shape:RigShape,
 }
 fn default_rig_color()->[u8;4]{[70,190,255,255]}
 
@@ -107,6 +118,7 @@ impl Default for PoseGuide{
         left_arm_deg:125.0,right_arm_deg:55.0,
         left_forearm_deg:105.0,right_forearm_deg:75.0,left_leg_deg:110.0,
         right_leg_deg:70.0,left_shin_deg:95.0,right_shin_deg:85.0,
+        locked:false,shape:RigShape::Stick,
     }}
 }
 impl PoseGuide {
@@ -275,7 +287,30 @@ pub fn draw_active(
         guide.color[0],guide.color[1],guide.color[2],alpha);
     let active_color=egui::Color32::from_rgba_unmultiplied(255,201,64,alpha.max(150));
     let stroke=egui::Stroke::new(2.0,color);
-    let line=|a:egui::Pos2,b:egui::Pos2|painter.line_segment([to_screen(a),to_screen(b)],stroke);
+    let line=|a:egui::Pos2,b:egui::Pos2| {
+        let delta=b-a;
+        let half=match guide.shape {
+            RigShape::Stick=>0.0,
+            RigShape::Rounded=>g.base*0.045,
+            RigShape::Box=>g.base*0.075,
+            RigShape::Rectangle=>g.base*0.045,
+        };
+        if half>0.0 && delta.length_sq()>0.0001 {
+            let normal=egui::vec2(-delta.y,delta.x).normalized()*half;
+            let tangent=delta.normalized()*half;
+            let (start,end)=if guide.shape==RigShape::Box {(a-tangent,b+tangent)}else{(a,b)};
+            painter.add(egui::Shape::convex_polygon(
+                vec![to_screen(start+normal),to_screen(end+normal),to_screen(end-normal),to_screen(start-normal)],
+                egui::Color32::TRANSPARENT,stroke));
+            if guide.shape==RigShape::Rounded {
+                let radius=to_screen(a).distance(to_screen(a+normal));
+                painter.circle_stroke(to_screen(a),radius,stroke);
+                painter.circle_stroke(to_screen(b),radius,stroke);
+            }
+        } else {
+            painter.line_segment([to_screen(a),to_screen(b)],stroke);
+        }
+    };
     line(g.root,g.chest); line(g.ls,g.rs); line(g.lh,g.rh);
     line(g.ls,g.le);line(g.le,g.lw);line(g.rs,g.re);line(g.re,g.rw);
     line(g.lh,g.lk);line(g.lk,g.la);line(g.rh,g.rk);line(g.rk,g.ra);
@@ -285,9 +320,19 @@ pub fn draw_active(
     let head_screen=to_screen(g.head);
     let head_edge=to_screen(g.head+egui::vec2(g.head_radius,0.0));
     let head_radius_px=head_screen.distance(head_edge).max(1.0);
-    painter.circle_stroke(head_screen,head_radius_px,
-        egui::Stroke::new(if active==Some(PoseJoint::Head){2.8}else{2.0},
-            if active==Some(PoseJoint::Head){active_color}else{color}));
+    let head_stroke=egui::Stroke::new(if active==Some(PoseJoint::Head){2.8}else{2.0},
+            if active==Some(PoseJoint::Head){active_color}else{color});
+    match guide.shape {
+        RigShape::Box | RigShape::Rectangle => {
+            let w=g.head_radius * if guide.shape==RigShape::Rectangle {0.78}else{1.0};
+            let h=g.head_radius;
+            painter.add(egui::Shape::convex_polygon(
+                [(-w,-h),(w,-h),(w,h),(-w,h)].into_iter()
+                    .map(|(x,y)|to_screen(g.head+egui::vec2(x,y))).collect(),
+                egui::Color32::TRANSPARENT,head_stroke));
+        }
+        _ => {painter.circle_stroke(head_screen,head_radius_px,head_stroke);}
+    }
 
     for joint in JOINTS {
         if joint==PoseJoint::Head{continue}

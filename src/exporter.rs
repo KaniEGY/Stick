@@ -166,7 +166,7 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
         }
 
         let fd = project.evaluate_layer_at_frame(layer, frame_idx);
-        if fd.media_items.is_empty() && fd.strokes.is_empty()
+        if layer.background.is_none() && fd.media_items.is_empty() && fd.strokes.is_empty()
             && fd.text_items.is_empty() && fd.symbol_instances.is_empty() {
             continue;
         }
@@ -203,6 +203,14 @@ fn render_layer_contents(
     frame_idx: usize,
     layer_pixmap: &mut Pixmap,
 ) {
+    if let Some(c) = layer.background {
+        if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0,
+            layer_pixmap.width() as f32, layer_pixmap.height() as f32) {
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+            layer_pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
     for m in &fd.media_items {
         if let Ok(img) = image::open(&m.path) {
             let mut resized = img
@@ -1008,6 +1016,22 @@ mod layer_opacity_tests {
             let halo = rendered.pixel(24,33).unwrap().alpha();
             assert!(halo > 0 && halo < rendered.pixel(24,24).unwrap().alpha());
         }
+    }
+
+    #[test]
+    fn layer_background_composites_and_respects_visibility() {
+        let mut p = AniProject::default();
+        p.width = 8;
+        p.height = 8;
+        p.layers[0].background = Some([220, 40, 30, 255]);
+        let rgba = pixmap_to_rgba_image(&render_frame_pixmap(&p, 1, true, [0;4]));
+        assert_eq!(rgba.get_pixel(0,0).0, [220,40,30,255]);
+        p.layers[0].opacity = 0.5;
+        let rgba = pixmap_to_rgba_image(&render_frame_pixmap(&p, 1, true, [0;4]));
+        assert!((127..=128).contains(&rgba.get_pixel(0,0).0[3]));
+        p.layers[0].visible = false;
+        let rgba = pixmap_to_rgba_image(&render_frame_pixmap(&p, 1, true, [0;4]));
+        assert_eq!(rgba.get_pixel(0,0).0[3], 0);
     }
 
     #[test]

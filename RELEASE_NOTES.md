@@ -1,4 +1,4 @@
-# Stick v4.1.1 — Brush color, canvas background and pose rig layers (2026-11-25)
+# Stick v4.1.1 — Pose rig locking and independent canvas/layer backgrounds (2026-11-25)
 
 - The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.
 - Successful exports now show a **folder button** beside **Done / تم** that opens the folder containing the exported file.
@@ -10,10 +10,19 @@
 
 ## English (US)
 
+### Pose rig locking and independent canvas/layer backgrounds
+- Locking the Pose Rig layer now blocks joint dragging and pose editing. Unlocking it restores joint manipulation; hiding the rig layer no longer discards its lock state.
+- Move rig controls into a persistent gear window so the color picker and geometry settings stay available without a context menu closing.
+- Remove the lightning shortcut beside the rig controls and replace the old library shortcut with a dedicated settings gear.
+- Add 2D rig geometry options: classic lines, rounded segments, box-like segments and rectangular segments.
+- Add **Canvas Settings** for a display-only canvas color and transparency-checkerboard preview. These display settings never alter exported pixels.
+- Right-click a normal layer to open its settings and choose a solid or transparent layer background. Layer backgrounds are composited into raster image, GIF, sprite-sheet and video exports; transparent layers reveal artwork underneath.
+- Keep legacy projects compatible: layers without a saved background remain transparent, and existing project export backgrounds are preserved.
+
 ### Brush colors, canvas backgrounds and pose rig layers
 - Colorize textured-brush preview masks with the selected RGB value; add regression coverage for Watercolor, Airbrush, Sketch, Soft Sketch and Graphite brushes in preview/export paths.
-- Add saved per-project canvas background color and transparency. Right-click a layer to change the canvas color, enable the white/gray checkerboard, or reset to white.
-- Apply the selected background to solid image/video exports and sprite sheets; transparent projects keep alpha in transparent PNG/sprite-sheet output and WebM.
+- Add per-layer solid or transparent backgrounds. Right-click a layer to open its background settings; the separate Canvas Settings tab changes only the editor preview.
+- Composite per-layer backgrounds into raster exports while keeping the canvas preview color separate from exported pixels.
 - Add a settings gear to each layer, make layer rows expand with the resized right dock, and expose general layer properties in a resizable settings window.
 - Store the pose guide in the project and represent it as a dedicated editor-only layer. Its color is customizable; Front / Back moves it above or below artwork; hiding the rig removes its layer.
 - Keep the selected artwork layer active while the rig is visible, so brush tools can draw normally; joint dragging only captures strokes when a rig joint is actually grabbed.
@@ -398,14 +407,23 @@
 
 ## العربية (المصري)
 
+### قفل هيكل الوضعية وفصل خلفية الكانفا عن خلفية اللير
+- قفل طبقة الهيكل بقى يمنع سحب المفاصل وتعديل الوضعية. لما تفتح القفل تقدر تحرك المفاصل تاني، وإخفاء الهيكل مش بيمسح حالة القفل.
+- نقلنا إعدادات الهيكل لنافذة مستقلة بتتفتح من الترس، عشان منتقي اللون وإعدادات الشكل يفضلوا متاحين ومينفعش قائمة الكلك يمين تقفلهم بالغلط.
+- شيلنا اختصار البرق اللي جنب الهيكل، واستبدلنا زر المكتبة القديم بترس مخصص لإعدادات الهيكل.
+- إضافة أشكال هندسية ثنائية الأبعاد للهيكل: خطوط عادية، أجزاء مستديرة، أجزاء شبه المكعبات، وأجزاء مستطيلة.
+- إضافة تبويب **إعدادات الكانفا** لتغيير لون خلفية العرض ومربعات الشفافية فقط. اللون ده مش بيغيّر أي بكسل في التصدير.
+- كلك يمين على أي لير عادي بيفتح إعداداته، ومنها تقدر تختار خلفية بلون ثابت أو تخلي خلفية اللير شفافة. خلفيات اللير بتظهر في تصدير الصور وGIF وSprite Sheet والفيديو، واللير الشفاف بيسمح بظهور الرسومات اللي تحته.
+- الحفاظ على توافق المشاريع القديمة: أي لير مفيهوش خلفية محفوظة بيفضل شفاف، وخلفية التصدير القديمة للمشروع بتفضل محفوظة زي ما هي.
+
 ### إصلاح فحص التحديثات
 - معالجة خطأ GitHub 504 بإعادة محاولة الاتصال تلقائيًا، واستخدام اتصال HTTPS جديد، والانتقال لمسار بديل لقائمة الإصدارات لو مسار آخر إصدار تعطل.
 - نفس تحسينات إعادة المحاولة اتضافت لفحص سجل الإصدارات السابقة.
 
 ### إصلاح ألوان الفرش والخلفية والهيكل
 - إصلاح تلوين خامات الفرش باللون المختار في المعاينة والتصدير، مع اختبارات للفرشة المائية والبخاخ والسكتش والسكتش الناعم وقلم الرصاص.
-- إضافة لون خلفية محفوظ داخل كل مشروع، مع إمكانية تغيير اللون من كلك يمين على أي لير، أو تفعيل الشفافية بمربعات بيضاء ورمادية، أو الرجوع للأبيض.
-- تطبيق لون الخلفية على التصدير بخلفية صلبة، والحفاظ على الشفافية في PNG وSprite Sheet وWebM عند اختيارها.
+- إضافة خلفية مستقلة لكل لير، تقدر تغيرها من إعدادات اللير بكلك يمين. لون الكانفا في تبويب إعدادات الكانفا خاص بالمعاينة فقط.
+- خلفيات اللير بتدخل في التصدير الراستر، بينما لون معاينة الكانفا مش بيأثر على الملفات الناتجة.
 - إضافة ترس إعدادات لكل لير، وجعل صفوف الطبقات تتمدد وتتقلص مع تغيير عرض الشريط الجانبي.
 - حفظ إعدادات الهيكل داخل المشروع وإظهاره كطبقة إرشادية مستقلة لا تدخل في التصدير، مع إمكانية تغيير لونه.
 - زر «أمام / خلف» ينقل الهيكل فوق كل الرسومات أو تحتها، وإخفاؤه يزيل طبقته تلقائيًا.
