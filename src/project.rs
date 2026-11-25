@@ -529,6 +529,9 @@ pub struct Layer {
     pub locked: bool,
     #[serde(default)]
     pub is_guide: bool,
+    /// Editor-only articulated pose guide; kept in the stack for front/back ordering.
+    #[serde(default)]
+    pub is_pose_rig: bool,
     /// Reference layers participate in bucket boundaries without forcing the
     /// user to sample every visible paint layer.
     #[serde(default)]
@@ -640,6 +643,12 @@ pub struct AniProject {
     pub width: u32,
     #[serde(default = "default_h")]
     pub height: u32,
+    #[serde(default = "default_background_color")]
+    pub background_color: [u8; 4],
+    #[serde(default)]
+    pub background_transparent: bool,
+    #[serde(default)]
+    pub pose_guide: crate::pose_guide::PoseGuide,
     #[serde(default = "default_fps")]
     pub fps: u32,
     #[serde(default = "default_one")]
@@ -660,6 +669,7 @@ pub struct AniProject {
 fn default_schema() -> u32 { PROJECT_SCHEMA_VERSION }
 fn default_w() -> u32 { 1920 }
 fn default_h() -> u32 { 1080 }
+fn default_background_color() -> [u8; 4] { [255, 255, 255, 255] }
 fn default_fps() -> u32 { 24 }
 
 impl Default for AniProject {
@@ -670,6 +680,9 @@ impl Default for AniProject {
             schema_version: PROJECT_SCHEMA_VERSION,
             width: 1920,
             height: 1080,
+            background_color: default_background_color(),
+            background_transparent: false,
+            pose_guide: crate::pose_guide::PoseGuide::default(),
             fps: 24,
             total_frames: 1,
             layers: vec![Layer {
@@ -677,6 +690,7 @@ impl Default for AniProject {
                 visible: true,
                 locked: false,
                 is_guide: false,
+                is_pose_rig: false,
                 is_reference: false,
                 xp_first_paint_rewarded: false,
                 opacity: 1.0,
@@ -1025,6 +1039,7 @@ pub fn import_adobe_animate_project(path: &Path) -> Result<AniProject, String> {
                 visible: true,
                 locked: false,
                 is_guide: false,
+                is_pose_rig: false,
                 is_reference: false,
                 xp_first_paint_rewarded: false,
                 opacity: 1.0,
