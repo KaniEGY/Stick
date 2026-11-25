@@ -1011,7 +1011,6 @@ mod layer_opacity_tests {
     }
 
     #[test]
-    #[test]
     fn project_background_color_and_transparency_render_correctly() {
         let mut project = AniProject::default();
         project.width = 12;
