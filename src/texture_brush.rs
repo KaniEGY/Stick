@@ -478,13 +478,13 @@ mod tests {
             };
             let mut target = Pixmap::new(128, 48).unwrap();
             brush.export(&mut target, &stroke, 255, Transform::identity());
-            let rgba = crate::exporter::pixmap_to_rgba_image(&target);
-            assert!(rgba.pixels().any(|p|
-                p.0[3] > 20
-                && (i16::from(p.0[0]) - 28).abs() <= 2
-                && (i16::from(p.0[1]) - 154).abs() <= 2
-                && (i16::from(p.0[2]) - 232).abs() <= 2),
-                "{preset:?} texture ignored its stroke color");
+            assert!(target.pixels().any(|pixel| {
+                let color=pixel.demultiply();
+                color.alpha() > 20
+                    && (i16::from(color.red()) - 28).abs() <= 2
+                    && (i16::from(color.green()) - 154).abs() <= 2
+                    && (i16::from(color.blue()) - 232).abs() <= 2
+            }), "{preset:?} texture ignored its stroke color");
         }
     }
 
