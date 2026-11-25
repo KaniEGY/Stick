@@ -1,4 +1,4 @@
-# Stick v4.1.0 — Supporter link and export-folder shortcut (2026-11-23)
+# Stick v4.1.1 — Brush color, canvas background and pose rig layers (2026-11-25)
 
 - The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.
 - Successful exports now show a **folder button** beside **Done / تم** that opens the folder containing the exported file.
@@ -9,6 +9,14 @@
 > **Maintainer checklist:** Update the English and Egyptian Arabic notes for **every new release** before publishing. Never claim features that did not pass tests.
 
 ## English (US)
+
+### Brush colors, canvas backgrounds and pose rig layers
+- Colorize textured-brush preview masks with the selected RGB value; add regression coverage for Watercolor, Airbrush, Sketch, Soft Sketch and Graphite brushes in preview/export paths.
+- Add saved per-project canvas background color and transparency. Right-click a layer to change the canvas color, enable the white/gray checkerboard, or reset to white.
+- Apply the selected background to solid image/video exports and sprite sheets; transparent projects keep alpha in transparent PNG/sprite-sheet output and WebM.
+- Add a settings gear to each layer, make layer rows expand with the resized right dock, and expose general layer properties in a resizable settings window.
+- Store the pose guide in the project and represent it as a dedicated editor-only layer. Its color is customizable; Front / Back moves it above or below artwork; hiding the rig removes its layer.
+- Keep the selected artwork layer active while the rig is visible, so brush tools can draw normally; joint dragging only captures strokes when a rig joint is actually grabbed.
 
 ### Timeline menu, faster exports and color handling
 - Widened and grouped the frame context menu; added an explicit Close action. Standard right-click menus also dismiss when clicking outside.
@@ -388,6 +396,15 @@
 - Added an unsaved-work guard to avoid restarting with an unfinished project.
 
 ## العربية (المصري)
+
+### إصلاح ألوان الفرش والخلفية والهيكل
+- إصلاح تلوين خامات الفرش باللون المختار في المعاينة والتصدير، مع اختبارات للفرشة المائية والبخاخ والسكتش والسكتش الناعم وقلم الرصاص.
+- إضافة لون خلفية محفوظ داخل كل مشروع، مع إمكانية تغيير اللون من كلك يمين على أي لير، أو تفعيل الشفافية بمربعات بيضاء ورمادية، أو الرجوع للأبيض.
+- تطبيق لون الخلفية على التصدير بخلفية صلبة، والحفاظ على الشفافية في PNG وSprite Sheet وWebM عند اختيارها.
+- إضافة ترس إعدادات لكل لير، وجعل صفوف الطبقات تتمدد وتتقلص مع تغيير عرض الشريط الجانبي.
+- حفظ إعدادات الهيكل داخل المشروع وإظهاره كطبقة إرشادية مستقلة لا تدخل في التصدير، مع إمكانية تغيير لونه.
+- زر «أمام / خلف» ينقل الهيكل فوق كل الرسومات أو تحتها، وإخفاؤه يزيل طبقته تلقائيًا.
+- إمكانية الرسم بأي فرشة على طبقات الرسم أثناء ظهور الهيكل، مع استمرار سحب المفاصل عند الضغط عليها مباشرة.
 
 ### تحسين قائمة الفريمات والتصدير والألوان
 - قائمة الفريمات بقت أعرض ومقسمة حسب الوظيفة، وفيها زر إغلاق.
