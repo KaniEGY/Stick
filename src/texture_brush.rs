@@ -454,6 +454,41 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn colored_brush_masks_are_tinted_by_the_selected_color() {
+        for (brush, preset) in [
+            (TextureBrush::Watercolor, KritaBrushPreset::Watercolor),
+            (TextureBrush::Airbrush, KritaBrushPreset::SoftAirbrush),
+            (TextureBrush::Sketch, KritaBrushPreset::SketchPencil),
+            (TextureBrush::SoftSketch, KritaBrushPreset::SoftSketchPencil),
+            (TextureBrush::Graphite, KritaBrushPreset::GraphitePencil),
+        ] {
+            let stroke = Stroke {
+                points: vec![
+                    crate::project::StrokePoint { x: 12.0, y: 24.0, pressure: 1.0 },
+                    crate::project::StrokePoint { x: 116.0, y: 24.0, pressure: 1.0 },
+                ],
+                color: [28, 154, 232, 255],
+                fill_color: None,
+                base_width: 18.0,
+                is_vector: false,
+                brush_preset: preset,
+                opacity: 1.0,
+                brush_texture_id: None,
+                tip_shape: BrushTipShape::Round,
+            };
+            let mut target = Pixmap::new(128, 48).unwrap();
+            brush.export(&mut target, &stroke, 255, Transform::identity());
+            let rgba = crate::exporter::pixmap_to_rgba_image(&target);
+            assert!(rgba.pixels().any(|p|
+                p.0[3] > 20
+                && (i16::from(p.0[0]) - 28).abs() <= 2
+                && (i16::from(p.0[1]) - 154).abs() <= 2
+                && (i16::from(p.0[2]) - 232).abs() <= 2),
+                "{preset:?} texture ignored its stroke color");
+        }
+    }
+
     fn marker_routes_to_continuous_shared_stroke_engine() {
         let stroke=Stroke {
             points:Vec::new(),color:[0,0,0,255],fill_color:None,base_width:20.0,
