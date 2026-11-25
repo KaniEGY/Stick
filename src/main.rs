@@ -3784,6 +3784,18 @@ impl StickApp {
                     self.active_layer_idx = selected_after_remove.map_or(insert_at, |idx| {
                         if insert_at <= idx { idx + 1 } else { idx }
                     });
+                    let remap_window = |idx: usize| {
+                        if idx == current { insert_at } else {
+                            let after_remove = if current < idx { idx - 1 } else { idx };
+                            if insert_at <= after_remove { after_remove + 1 } else { after_remove }
+                        }
+                    };
+                    if let Some(idx)=self.layer_settings_window {
+                        self.layer_settings_window=Some(remap_window(idx));
+                    }
+                    if let Some(idx)=self.layer_effect_window {
+                        self.layer_effect_window=Some(remap_window(idx));
+                    }
                     self.has_unsaved_changes = true;
                 }
             } else {
@@ -3803,11 +3815,25 @@ impl StickApp {
                 };
                 let insert_at = if self.project.pose_guide.in_front { 0 } else { self.project.layers.len() };
                 if insert_at <= self.active_layer_idx { self.active_layer_idx += 1; }
+                if let Some(idx)=self.layer_settings_window {
+                    if insert_at <= idx { self.layer_settings_window=Some(idx+1); }
+                }
+                if let Some(idx)=self.layer_effect_window {
+                    if insert_at <= idx { self.layer_effect_window=Some(idx+1); }
+                }
                 self.project.layers.insert(insert_at, rig);
                 self.has_unsaved_changes = true;
             }
         } else if let Some(index) = existing {
             self.project.layers.remove(index);
+            if self.layer_settings_window == Some(index) { self.layer_settings_window=None; }
+            else if self.layer_settings_window.is_some_and(|idx|idx>index) {
+                self.layer_settings_window=self.layer_settings_window.map(|idx|idx-1);
+            }
+            if self.layer_effect_window == Some(index) { self.layer_effect_window=None; }
+            else if self.layer_effect_window.is_some_and(|idx|idx>index) {
+                self.layer_effect_window=self.layer_effect_window.map(|idx|idx-1);
+            }
             if self.active_layer_idx == index {
                 self.active_layer_idx = 0;
             } else if self.active_layer_idx > index {
