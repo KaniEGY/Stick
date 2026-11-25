@@ -69,7 +69,7 @@ const INSTAGRAM_URL: &str = "https://www.instagram.com/ablikash?exln=NmFtNWZidnB
 const SUPPORT_URL: &str = "https://ipn.eg/S/imhady/instapay/0tZZ7c";
 const HAZEM_INSTAGRAM_URL: &str = "https://www.instagram.com/hazem.draws?dmpr=MTZkNXNsOXRhMnpqOQ%3D%3D";
 const SUPPORTERS: [(&str, &str, u32, &str); 1] =
-    [("Hazem", "حازم", 2, HAZEM_INSTAGRAM_URL)];
+    [("Hazem", "حازم", 12, HAZEM_INSTAGRAM_URL)];
 
 #[derive(Clone, Copy, PartialEq)]
 enum WorkspaceMode {
@@ -1802,6 +1802,51 @@ fn build_geometric_stroke(kind: GeometricShapeKind, p0: egui::Pos2, p1: egui::Po
     }
 }
 
+// Only translucent layers need offscreen group compositing in the editor.
+struct LayerPreviewCacheEntry {
+    size: [u32; 2],
+    effect: LayerEffectPreset,
+    data: FrameData,
+    symbol_strokes: Vec<Option<Vec<Stroke>>>,
+    texture: egui::TextureHandle,
+}
+
+fn composited_layer_preview(
+    cache: &mut HashMap<usize, LayerPreviewCacheEntry>,
+    project: &AniProject,
+    layer: &Layer,
+    layer_index: usize,
+    frame_index: usize,
+    data: &FrameData,
+    ctx: &egui::Context,
+) -> Option<egui::TextureHandle> {
+    let size = [project.width.max(1), project.height.max(1)];
+    if let Some(entry) = cache.get(&layer_index) {
+        let symbols_match = entry.symbol_strokes.len() == data.symbol_instances.len()
+            && entry.symbol_strokes.iter().zip(&data.symbol_instances).all(|(cached, instance)| {
+                cached.as_deref() == project.library_symbols.get(&instance.symbol_name)
+                    .map(|symbol| project.evaluate_symbol_strokes(symbol, frame_index))
+            });
+        if entry.size == size && entry.effect == layer.effect && &entry.data == data && symbols_match {
+            return Some(entry.texture.clone());
+        }
+    }
+    let rgba = exporter::render_layer_rgba(project, layer, data, frame_index)?;
+    let texture = ctx.load_texture(
+        format!("stick_composited_layer_{layer_index}"),
+        egui::ColorImage::from_rgba_unmultiplied([size[0] as usize, size[1] as usize], rgba.as_raw()),
+        egui::TextureOptions::LINEAR,
+    );
+    let symbol_strokes = data.symbol_instances.iter().map(|instance| {
+        project.library_symbols.get(&instance.symbol_name)
+            .map(|symbol| project.evaluate_symbol_strokes(symbol, frame_index).to_vec())
+    }).collect();
+    cache.insert(layer_index, LayerPreviewCacheEntry {
+        size, effect: layer.effect, data: data.clone(), symbol_strokes, texture: texture.clone()
+    });
+    Some(texture)
+}
+
 struct StickApp {
     workspace_mode: WorkspaceMode,
     online_page: OnlinePage,
@@ -1998,6 +2043,7 @@ struct StickApp {
     current_stroke: Option<Stroke>,
     stylus_tracker: TouchPressureTracker,
     texture_cache: HashMap<String, egui::TextureHandle>,
+    layer_preview_cache: HashMap<usize, LayerPreviewCacheEntry>,
     status_message: String,
     audio_sink: Option<(OutputStream, Vec<Sink>)>,
     audio_scrub_output: Option<(OutputStream, OutputStreamHandle)>,
@@ -2219,6 +2265,7 @@ impl StickApp {
             current_stroke: None,
             stylus_tracker: TouchPressureTracker::default(),
             texture_cache: HashMap::new(),
+            layer_preview_cache: HashMap::new(),
             status_message: "Stick Studio Ready".to_string(),
             audio_sink: None,
             audio_scrub_output: None,
@@ -4430,6 +4477,7 @@ impl StickApp {
         self.pending_delete_layer = None;
         self.layer_rename_index = None;
         self.texture_cache.clear();
+        self.layer_preview_cache.clear();
         self.current_project_path = None;
         self.project = project;
         self.canvas_width_edit = self.project.width;
@@ -9054,60 +9102,74 @@ impl eframe::App for StickApp {
                                     }
                                 }
                                 let is_locked = layer.locked;
-                                cresp.context_menu(|ui| {
-                                    ui.strong(format!("{} — {}", layer.name, f));
-                                    ui.separator();
-                                    if is_b { return; }
-                                    if ui.button(tr(lang, "Copy Frame", "انسخ الفريم")).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Copy));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked,
-                                        egui::Button::new(tr(lang,"Cut Frame","قص الفريم"))).clicked() {
-                                        frame_menu_action=Some((l_idx,f,timeline_ops::FrameAction::Cut));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked && self.clipboard_frame.is_some(),
-                                        egui::Button::new(tr(lang, "Paste over cel", "الصق مكان الخلية"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Paste));
-                                        ui.close_menu();
-                                    }
-                                    ui.separator();
-                                    let can_insert = !is_locked && self.timeline_length < timeline_ops::MAX_TIMELINE_FRAMES;
-                                    if ui.add_enabled(can_insert, egui::Button::new(
-                                        tr(lang, "Duplicate cel after (this layer)", "كرّر الخلية بعدها في الطبقة دي"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Duplicate));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(can_insert, egui::Button::new(
-                                        tr(lang, "Insert empty cel before (this layer)", "أدرج خلية فاضية قبلها في الطبقة دي"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::InsertEmpty));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked, egui::Button::new(
-                                        tr(lang, "Create Keyframe", "اعمل كي فريم"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Keyframe));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked, egui::Button::new(
-                                        tr(lang, "Blank Keyframe", "كي فريم فاضي"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::BlankKeyframe));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(!is_locked && layer.keyframes.contains_key(&f),
-                                        egui::Button::new(tr(lang, "Delete Keyframe", "احذف الكي فريم"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteKeyframe));
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(can_delete_global, egui::Button::new(
-                                        tr(lang, "Delete Time (all layers)", "احذف زمن الفريم من كل الليرز"))).clicked() {
-                                        frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteFrame));
-                                        ui.close_menu();
-                                    }
-                                    if !can_delete_global {
-                                        ui.small(tr(lang, "Unlock layers before deleting time.", "افتح قفل الليرز عشان تحذف الزمن."));
-                                    }
-                                });
+                                if !is_b {
+                                    cresp.context_menu(|ui| {
+                                        // The timeline cell may be only a few pixels wide.
+                                        // Give the popup its own width instead of inheriting that cell.
+                                        ui.set_min_width(280.0);
+                                        ui.strong(format!("{} — {} {}", layer.name, tr(lang, "Frame", "فريم"), f));
+                                        ui.separator();
+                                        ui.small(tr(lang, "Clipboard", "نسخ ولصق"));
+                                        if ui.button(tr(lang, "Copy frame", "نسخ الفريم")).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Copy));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked, egui::Button::new(
+                                            tr(lang, "Cut frame", "قص الفريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Cut));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked && self.clipboard_frame.is_some(),
+                                            egui::Button::new(tr(lang, "Paste into frame", "لصق في الفريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Paste));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        ui.small(tr(lang, "Frame operations — this layer", "عمليات الفريم — الطبقة الحالية"));
+                                        let can_insert = !is_locked && self.timeline_length < timeline_ops::MAX_TIMELINE_FRAMES;
+                                        if ui.add_enabled(can_insert, egui::Button::new(
+                                            tr(lang, "Duplicate frame after", "تكرار الفريم بعد الحالي"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Duplicate));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(can_insert, egui::Button::new(
+                                            tr(lang, "Insert empty frame before", "إدراج فريم فاضي قبل الحالي"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::InsertEmpty));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        ui.small(tr(lang, "Keyframes", "الفريمات الأساسية"));
+                                        if ui.add_enabled(!is_locked, egui::Button::new(
+                                            tr(lang, "Create keyframe", "إنشاء كي فريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Keyframe));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked, egui::Button::new(
+                                            tr(lang, "Blank keyframe", "إنشاء كي فريم فاضي"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::BlankKeyframe));
+                                            ui.close_menu();
+                                        }
+                                        if ui.add_enabled(!is_locked && layer.keyframes.contains_key(&f),
+                                            egui::Button::new(tr(lang, "Delete keyframe", "حذف الكي فريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteKeyframe));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        ui.small(tr(lang, "Timeline — all layers", "التايم لاين — كل الطبقات"));
+                                        if ui.add_enabled(can_delete_global, egui::Button::new(
+                                            egui::RichText::new(tr(lang, "Delete time in all layers", "حذف زمن الفريم من كل الطبقات"))
+                                                .color(egui::Color32::LIGHT_RED))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::DeleteFrame));
+                                            ui.close_menu();
+                                        }
+                                        if !can_delete_global {
+                                            ui.small(tr(lang, "Unlock layers to delete time.", "افتح قفل الطبقات لحذف الزمن."));
+                                        }
+                                        if ui.button(tr(lang, "Close menu", "إغلاق القائمة")).clicked() {
+                                            ui.close_menu();
+                                        }
+                                    });
+                                }
                             }
                         });
                     }
@@ -10872,16 +10934,48 @@ impl eframe::App for StickApp {
 
             let mut canvas_media_select: Option<(usize,usize)> = None;
             let mut canvas_media_action: Option<(usize,usize,bool)> = None; // true=duplicate
+            // Bound cached layer textures to 64 MiB and avoid rasterizing
+            // ordinary fully opaque vector/brush layers during editing.
+            let preview_bytes = u64::from(self.project.width.max(1))
+                .saturating_mul(u64::from(self.project.height.max(1))).saturating_mul(4);
+            let preview_slots = ((64 * 1024 * 1024u64) / preview_bytes.max(1)).min(8) as usize;
+            let mut used_layer_previews = Vec::new();
             for (layer_index,layer) in self.project.layers.iter().enumerate().rev() {
                 if layer.visible {
                     let l_op = layer.opacity.clamp(0.0, 1.0);
                     if l_op == 0.0 { continue; }
                     let fd = self.project.evaluate_layer_at_frame(layer, self.current_frame);
+                    // Export applies layer opacity once after painting its artwork.
+                    // Match that group-opacity behavior on the canvas too.
+                    let mut group_preview = false;
+                    if !layer.is_guide && l_op < 1.0 && used_layer_previews.len() < preview_slots
+                        && self.project.width <= 4096 && self.project.height <= 4096
+                        && !(fd.media_items.is_empty() && fd.strokes.is_empty()
+                            && fd.text_items.is_empty() && fd.symbol_instances.is_empty()) {
+                        if let Some(texture) = composited_layer_preview(
+                            &mut self.layer_preview_cache, &self.project, layer, layer_index,
+                            self.current_frame, &fd, ctx,
+                        ) {
+                            used_layer_previews.push(layer_index);
+                            group_preview = true;
+                            let mut mesh = egui::Mesh::with_texture(texture.id());
+                            let tint = egui::Color32::from_white_alpha((l_op * 255.0).round() as u8);
+                            for (x,y,u,v) in [(0.0,0.0,0.0,0.0), (stage_w,0.0,1.0,0.0),
+                                (stage_w,stage_h,1.0,1.0), (0.0,stage_h,0.0,1.0)] {
+                                mesh.vertices.push(egui::epaint::Vertex {
+                                    pos: to_screen(egui::pos2(x,y)), uv: egui::pos2(u,v), color: tint,
+                                });
+                            }
+                            mesh.indices.extend_from_slice(&[0,1,2,0,2,3]);
+                            paper_painter.add(egui::Shape::mesh(mesh));
+                        }
+                    }
                     for (media_index,m) in fd.media_items.iter().enumerate() {
                         let corners=media_transform::corners(m);
                         let texture_key=if layer.effect==LayerEffectPreset::Monochrome {
                             format!("{}#stick_monochrome",m.path)
                         } else {m.path.clone()};
+                        if !group_preview {
                         if let Some(tex) = self.texture_cache.get(&texture_key) {
                             let mut mesh = egui::Mesh::with_texture(tex.id());
                             let effect_white=layer.effect.apply_rgba([255,255,255,255]);
@@ -10897,6 +10991,7 @@ impl eframe::App for StickApp {
                             }
                             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
                             paper_painter.add(egui::Shape::mesh(mesh));
+                        }
                         }
                         // Give imported media its own hit target on the canvas.
                         // This makes right-click Delete/Duplicate available without
@@ -10929,6 +11024,7 @@ impl eframe::App for StickApp {
                             });
                         }
                     }
+                    if !group_preview {
                     for s in &fd.strokes {
                         if layer.effect==LayerEffectPreset::None {
                             draw_stroke_pro(&painter,s,None,l_op,scale,0.0,0.0,&to_screen);
@@ -10980,8 +11076,10 @@ impl eframe::App for StickApp {
                             }
                         }
                     }
+                    }
                 }
             }
+            self.layer_preview_cache.retain(|index,_| used_layer_previews.contains(index));
 
             if let Some((layer_index,media_index))=canvas_media_select {
                 self.active_layer_idx=layer_index;
@@ -11445,11 +11543,11 @@ mod tool_discovery_tests {
         assert!(!"Stick".contains("Studio"));
     }
     #[test]
-    fn supporters_roster_contains_only_hazem_with_two_egp() {
+    fn supporters_roster_contains_only_hazem_with_twelve_egp() {
         assert_eq!(SUPPORTERS.len(), 1);
         assert_eq!(
             SUPPORTERS[0],
-            ("Hazem", "حازم", 2, HAZEM_INSTAGRAM_URL)
+            ("Hazem", "حازم", 12, HAZEM_INSTAGRAM_URL)
         );
     }
     #[test]

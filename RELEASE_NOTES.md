@@ -10,6 +10,14 @@
 
 ## English (US)
 
+### Timeline menu, faster exports and color handling
+- Widened and grouped the frame context menu; added an explicit Close action. Standard right-click menus also dismiss when clicking outside.
+- Hazem's supporter total is now 12 EGP; the crown still opens his Instagram.
+- Stream video frames directly into FFmpeg instead of writing temporary PNG files; reuse held frames and bound GIF/video rendering memory.
+- Corrected premultiplied alpha handling for imported media and safe translucent marker previews. PNG keeps straight RGBA; modern video uses explicit BT.709 matrix/range metadata, and AVI uses BT.601 for legacy decoding compatibility.
+- The editor uses cached group compositing for translucent layers within a bounded preview memory budget, matching the export layer-opacity model.
+
+
 ### Final wide-marker overlap fix
 - Fixed the remaining dark triangle/star artifacts on wide translucent Marker curves.
 - Marker bodies are now built as one concave outline and triangulated once, instead of overlapping translucent segment quads.
@@ -380,6 +388,15 @@
 - Added an unsaved-work guard to avoid restarting with an unfinished project.
 
 ## العربية (المصري)
+
+### تحسين قائمة الفريمات والتصدير والألوان
+- قائمة الفريمات بقت أعرض ومقسمة حسب الوظيفة، وفيها زر إغلاق.
+- تحديث تبرع حازم إلى 12 جنيه مع الحفاظ على رابط الإنستجرام.
+- التصدير بيبعت الفريمات مباشرة لـ FFmpeg بدل ملفات PNG مؤقتة، وبيستفيد من الفريمات الثابتة مع تحديد استهلاك الذاكرة.
+- تصحيح التعامل مع شفافية الماركر والصور المستوردة، وتحديد تحويل الألوان في الفيديو. PNG بيحتفظ بقيم RGB والشفافية.
+- معاينة الطبقات شبه الشفافة بتستخدم نفس محرك تجميع الرسم الخاص بالتصدير، مع كاش محدود للذاكرة.
+
+
 
 ### إصلاح نهائي لتداخل الماركر العريض
 - اتحلت مشكلة المثلثات/النجوم السودا اللي كانت لسه بتظهر على انحناءات الماركر الشفاف والعريض.

@@ -409,10 +409,13 @@ fn paint_marker_safe_raster(
     pixmap.stroke_path(&path,&paint,&stroke,tiny_skia::Transform::identity(),None);
 
     let mut rgba=Vec::with_capacity((pw as usize)*(ph as usize)*4);
+    // Color32 stores premultiplied RGB. The texture constructor expects straight
+    // RGB, so recover it before applying the coverage alpha.
+    let [r,g,b,a]=color.to_srgba_unmultiplied();
     for px in pixmap.data().chunks_exact(4) {
         let coverage=px[3] as u16;
-        let alpha=((coverage*color.a() as u16+127)/255) as u8;
-        rgba.extend_from_slice(&[color.r(),color.g(),color.b(),alpha]);
+        let alpha=((coverage*a as u16+127)/255) as u8;
+        rgba.extend_from_slice(&[r,g,b,alpha]);
     }
     let image=egui::ColorImage::from_rgba_unmultiplied([pw as usize,ph as usize],&rgba);
     let texture=painter.ctx().load_texture(
