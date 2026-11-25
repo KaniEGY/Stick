@@ -483,7 +483,7 @@ mod tests {
             };
             let mut target = Pixmap::new(128, 48).unwrap();
             brush.export(&mut target, &stroke, 255, Transform::identity());
-            assert!(target.pixels().any(|pixel| {
+            assert!(target.pixels().iter().any(|pixel| {
                 let color=pixel.demultiply();
                 color.alpha() > 20
                     && (i16::from(color.red()) - 28).abs() <= 2
