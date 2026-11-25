@@ -393,9 +393,14 @@
 - Fixed standalone Stick.exe reporting an old or missing version.txt instead of its own compiled build number.
 - Fixed version checks that could offer the same build again.
 - Fixed the updater getting stuck if GitHub can't be reached.
+- Improved update checks with automatic retries, fresh HTTPS connections, and a fallback Releases API route when GitHub's latest-release endpoint returns a gateway timeout (502/503/504).
 - Added an unsaved-work guard to avoid restarting with an unfinished project.
 
 ## العربية (المصري)
+
+### إصلاح فحص التحديثات
+- معالجة خطأ GitHub 504 بإعادة محاولة الاتصال تلقائيًا، واستخدام اتصال HTTPS جديد، والانتقال لمسار بديل لقائمة الإصدارات لو مسار آخر إصدار تعطل.
+- نفس تحسينات إعادة المحاولة اتضافت لفحص سجل الإصدارات السابقة.
 
 ### إصلاح ألوان الفرش والخلفية والهيكل
 - إصلاح تلوين خامات الفرش باللون المختار في المعاينة والتصدير، مع اختبارات للفرشة المائية والبخاخ والسكتش والسكتش الناعم وقلم الرصاص.
