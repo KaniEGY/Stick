@@ -960,7 +960,6 @@ mod layer_opacity_tests {
     }
 
     #[test]
-    #[test]
     fn textured_brushes_preserve_selected_non_black_color_in_export() {
         for preset in [
             KritaBrushPreset::Watercolor,
@@ -1012,6 +1011,22 @@ mod layer_opacity_tests {
     }
 
     #[test]
+    #[test]
+    fn project_background_color_and_transparency_render_correctly() {
+        let mut project = AniProject::default();
+        project.width = 12;
+        project.height = 12;
+        project.background_color = [24, 112, 208, 255];
+        let solid = render_frame_pixmap(&project, 1, false, project.background_color);
+        assert_eq!(solid.pixel(6, 6).unwrap().demultiply().red(), 24);
+        assert_eq!(solid.pixel(6, 6).unwrap().demultiply().green(), 112);
+        assert_eq!(solid.pixel(6, 6).unwrap().demultiply().blue(), 208);
+
+        project.background_transparent = true;
+        let transparent = render_frame_pixmap(&project, 1, true, project.background_color);
+        assert_eq!(transparent.pixel(6, 6).unwrap().alpha(), 0);
+    }
+
     fn straight_media_rgba_round_trips_without_darkening() {
         let image = RgbaImage::from_raw(2, 1, vec![240, 80, 40, 128, 10, 200, 150, 255]).unwrap();
         let mut pixmap = Pixmap::new(2, 1).unwrap();
