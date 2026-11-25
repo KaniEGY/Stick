@@ -203,15 +203,15 @@ fn render_layer_contents(
     frame_idx: usize,
     layer_pixmap: &mut Pixmap,
 ) {
-    for m in &fd.media_items {    if let Some(c) = layer.background {
-    for m in &fd.media_items {        if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0,
-    for m in &fd.media_items {            layer_pixmap.width() as f32, layer_pixmap.height() as f32) {
-    for m in &fd.media_items {            let mut paint = tiny_skia::Paint::default();
-    for m in &fd.media_items {            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-    for m in &fd.media_items {            layer_pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-    for m in &fd.media_items {        }
-    for m in &fd.media_items {    }
-    for m in &fd.media_items {    for m in &fd.media_items {
+    if let Some(c) = layer.background {
+        if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0,
+            layer_pixmap.width() as f32, layer_pixmap.height() as f32) {
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+            layer_pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
+    for m in &fd.media_items {
         if let Ok(img) = image::open(&m.path) {
             let mut resized = img
                 .resize_exact(
