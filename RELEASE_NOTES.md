@@ -10,6 +10,14 @@
 
 ## English (US)
 
+### Stability and data protection
+- Imported video frames now use unique persistent folders, preventing a later import from deleting earlier project assets. Oversized clips are rejected instead of silently exceeding timeline capacity.
+- Bound project decompression and file reads before allocation; reject invalid canvas dimensions and overflowing schema numbers.
+- Verify saved project bytes and accurately report failed replacement or recovery, preserving the backup paths.
+- Limit Sprite Sheet memory and PNG sequence parallelism; report export failures in the interface rather than silently doing nothing.
+- Reset stale pose selections and layer settings after undo/redo or switching projects.
+- Limit oversized brush files and expanded Krita/CSP archive entries. Basic Lottie export now explicitly describes its first-frame-only limitation.
+
 ### Pose rig locking and independent canvas/layer backgrounds
 - Locking the Pose Rig layer now blocks joint dragging and pose editing. Unlocking it restores joint manipulation; hiding the rig layer no longer discards its lock state.
 - Move rig controls into a persistent gear window so the color picker and geometry settings stay available without a context menu closing.
@@ -406,6 +414,14 @@
 - Added an unsaved-work guard to avoid restarting with an unfinished project.
 
 ## العربية (المصري)
+
+### تحسين الاستقرار وحماية المشاريع
+- كل فيديو مستورد له مجلد فريمات مستقل ودائم، عشان استيراد فيديو جديد مايمسحش فريمات فيديو قديم. رفض الفيديوهات اللي تتجاوز سعة التايم لاين المتبقية.
+- تطبيق حدود قراءة وفك ضغط المشاريع قبل استهلاك الذاكرة، ورفض الأبعاد وأرقام إصدارات الملفات غير الصالحة.
+- التحقق من تطابق بيانات الحفظ، وإظهار مسار النسخة الاحتياطية لو فشل الاستبدال والاسترجاع.
+- تقليل استهلاك الذاكرة أثناء تصدير Sprite Sheet وسلسلة PNG، وإظهار أخطاء التصدير بدل تجاهلها.
+- تنظيف حالة اختيار الهيكل ونوافذ اللير بعد التراجع أو فتح مشروع آخر.
+- وضع حدود لحجم ملفات الفرش وفك ضغط أرشيفات Krita وCSP، وتوضيح إن تصدير Lottie الحالي مبسط للفريم الأول فقط.
 
 ### قفل هيكل الوضعية وفصل خلفية الكانفا عن خلفية اللير
 - قفل طبقة الهيكل بقى يمنع سحب المفاصل وتعديل الوضعية. لما تفتح القفل تقدر تحرك المفاصل تاني، وإخفاء الهيكل مش بيمسح حالة القفل.

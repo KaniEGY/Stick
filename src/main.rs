@@ -3169,6 +3169,13 @@ impl StickApp {
         self.has_unsaved_changes = true;
         self.clear_cel_selection();
         self.advanced_selected_cels.clear();
+        self.layer_settings_window = None;
+        self.layer_effect_window = None;
+        self.pending_delete_layer = None;
+        self.layer_rename_index = None;
+        self.layer_preview_cache.clear();
+        self.pose_drag_joint = None;
+        self.pose_edit_mode = self.project.pose_guide.visible && !self.pose_rig_locked();
     }
 
     fn clear_cel_selection(&mut self) {
@@ -4727,6 +4734,11 @@ impl StickApp {
         self.project = project;
         self.canvas_width_edit = self.project.width;
         self.canvas_height_edit = self.project.height;
+        self.pose_drag_joint = None;
+        self.pose_edit_mode = self.project.pose_guide.visible && !self.pose_rig_locked();
+        if self.project.layers.get(self.active_layer_idx).is_some_and(|l| l.is_pose_rig) {
+            self.active_layer_idx = self.project.layers.iter().position(|l| !l.is_pose_rig).unwrap_or(0);
+        }
     }
 
     fn open_project_at_path(&mut self, p: PathBuf) {
@@ -4821,7 +4833,10 @@ impl StickApp {
 
     fn import_animate_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new().add_filter("Adobe Animate", &["xfl", "fla"]).pick_file() {
-            if let Ok(proj) = project::import_adobe_animate_project(&path) {
+            if let Ok(proj) = project::import_adobe_animate_project(&path).and_then(|p| {
+                persistence::validate_project_bounds(&p)?;
+                Ok(p)
+            }) {
                 self.replace_document(proj);
                 self.has_unsaved_changes = true;
                 self.play_sfx(SfxType::NewFrame);
@@ -4831,7 +4846,17 @@ impl StickApp {
 
     fn import_video_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new().add_filter("Videos", &["mp4", "mov", "avi", "mkv", "webm"]).pick_file() {
-            if let Ok(frames) = exporter::extract_video_frames(&path, self.project.fps) {
+            let available = timeline_ops::MAX_TIMELINE_FRAMES.saturating_sub(self.current_frame).saturating_add(1);
+            let frames = match exporter::extract_video_frames(&path, self.project.fps, available) {
+                Ok(frames) => frames,
+                Err(err) => {
+                    self.project_notice_title = tr(self.config.lang,"Video import failed","تعذر استيراد الفيديو").to_string();
+                    self.project_notice_body = err;
+                    self.show_project_notice = true;
+                    return;
+                }
+            };
+            {
                 self.save_undo_state();
                 let needed_len = self.current_frame + frames.len().saturating_sub(1);
                 if needed_len > self.timeline_length {
@@ -6786,11 +6811,13 @@ impl eframe::App for StickApp {
                                     let ext = self.selected_image_format.ext();
                                     if let Some(mut p) = rfd::FileDialog::new().add_filter("Img", &[ext]).set_file_name(&format!("Stick.{}", ext)).save_file() {
                                         if p.extension().is_none() { p.set_extension(ext); }
-                                        if exporter::export_single_image_format(&self.project, self.current_frame, &p, self.selected_image_format, self.project.background_color).is_ok() {
-                                            self.play_sfx(SfxType::ExportSuccess);
-                                            *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
-                                                ExportTaskState::Done("تم حفظ الصورة!".to_string(), p.clone());
-                                        }
+                                        let result = exporter::export_single_image_format(&self.project, self.current_frame, &p, self.selected_image_format, self.project.background_color);
+                                        if result.is_ok() { self.play_sfx(SfxType::ExportSuccess); }
+                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                                            match result {
+                                                Ok(()) => ExportTaskState::Done("تم حفظ الصورة!".to_string(), p.clone()),
+                                                Err(err) => ExportTaskState::Failed(err),
+                                            };
                                     }
                                 }
                                 if ui.button(tr(lang, "Close", "إغلاق")).clicked() { self.show_export_studio = false; }
@@ -6800,22 +6827,26 @@ impl eframe::App for StickApp {
                                 self.project.total_frames = self.timeline_length;
                                 if let Some(mut p) = rfd::FileDialog::new().add_filter("PNG", &["png"]).set_file_name("SpriteSheet.png").save_file() {
                                     if p.extension().is_none() { p.set_extension("png"); }
-                                    if exporter::export_sprite_sheet(&self.project, &p).is_ok() {
-                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
-                                            ExportTaskState::Done("تم تصدير Sprite Sheet!".to_string(), p.clone());
-                                    }
+                                    *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                                        match exporter::export_sprite_sheet(&self.project, &p) {
+                                            Ok(_) => ExportTaskState::Done("تم تصدير Sprite Sheet!".to_string(), p.clone()),
+                                            Err(err) => ExportTaskState::Failed(err),
+                                        };
                                 }
                             }
                             if ui.button(tr(lang, "Close", "إغلاق")).clicked() { self.show_export_studio = false; }
                         } else {
+                            ui.small(tr(lang, "Basic first-frame vector export only; animation, media and full brush appearance are not supported.",
+                                "تصدير فيكتور مبسط للفريم الأول فقط؛ الحركة والوسائط ومظهر الفرش الكامل غير مدعومين."));
                             if ui.button(tr(lang, "🌐 Export Lottie JSON...", "🌐 تصدير Lottie JSON...")).clicked() {
                                 self.project.total_frames = self.timeline_length;
                                 if let Some(mut p) = rfd::FileDialog::new().add_filter("JSON", &["json"]).set_file_name("Lottie.json").save_file() {
                                     if p.extension().is_none() { p.set_extension("json"); }
-                                    if exporter::export_lottie_json(&self.project, &p).is_ok() {
-                                        *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
-                                            ExportTaskState::Done("تم تصدير Lottie JSON!".to_string(), p.clone());
-                                    }
+                                    *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                                        match exporter::export_lottie_json(&self.project, &p) {
+                                            Ok(()) => ExportTaskState::Done("تم تصدير Lottie JSON!".to_string(), p.clone()),
+                                            Err(err) => ExportTaskState::Failed(err),
+                                        };
                                 }
                             }
                             if ui.button(tr(lang, "Close", "إغلاق")).clicked() { self.show_export_studio = false; }

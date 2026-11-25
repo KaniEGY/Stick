@@ -1,5 +1,6 @@
 use crate::project::PROJECT_SCHEMA_VERSION;
 use serde_json::Value;
+use std::io::Read;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectedFormat {
@@ -19,7 +20,7 @@ pub struct SniffResult {
     pub was_zstd: bool,
 }
 
-const MAX_PROJECT_RAW_BYTES: usize = 250 * 1024 * 1024; // 250 MB limit
+pub(crate) const MAX_PROJECT_RAW_BYTES: usize = 250 * 1024 * 1024; // 250 MB limit
 const MAX_DECOMPRESSED_BYTES: usize = 512 * 1024 * 1024; // 512 MB limit
 
 pub fn sniff_project_bytes(raw: &[u8]) -> Result<SniffResult, String> {
@@ -33,12 +34,7 @@ pub fn sniff_project_bytes(raw: &[u8]) -> Result<SniffResult, String> {
     // Zstd magic number: 0xFD2FB528 (Little Endian: 28 B5 2F FD)
     let is_zstd = raw.len() >= 4 && raw[0] == 0x28 && raw[1] == 0xB5 && raw[2] == 0x2F && raw[3] == 0xFD;
     let payload = if is_zstd {
-        let dec = zstd::decode_all(raw)
-            .map_err(|e| format!("فشل فك ضغط Zstd؛ قد يكون الملف تالفاً أو غير مكتمل: {}", e))?;
-        if dec.len() > MAX_DECOMPRESSED_BYTES {
-            return Err("حجم البيانات بعد فك الضغط يتجاوز الحد المسموح.".to_string());
-        }
-        dec
+        decode_zstd_bounded(raw, MAX_DECOMPRESSED_BYTES)?
     } else {
         raw.to_vec()
     };
@@ -72,6 +68,24 @@ pub fn sniff_project_bytes(raw: &[u8]) -> Result<SniffResult, String> {
     Err("صيغة الملف غير معروفة أو تالفة؛ هذا الملف ليس مشروع Stick صالحاً.".to_string())
 }
 
+fn decode_zstd_bounded(raw: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    let decoder = zstd::stream::read::Decoder::new(raw)
+        .map_err(|e| format!("فشل فك ضغط Zstd: {e}"))?;
+    let mut data = Vec::new();
+    decoder.take(limit as u64 + 1).read_to_end(&mut data)
+        .map_err(|e| format!("فشل فك ضغط Zstd: {e}"))?;
+    if data.len() > limit {
+        return Err("حجم البيانات بعد فك الضغط يتجاوز الحد المسموح.".into());
+    }
+    Ok(data)
+}
+
+fn checked_schema(value: &Value) -> Result<u32, String> {
+    value.as_u64().and_then(|v| u32::try_from(v).ok())
+        .filter(|&v| v > 0)
+        .ok_or_else(|| "رقم إصدار صيغة المشروع غير صالح.".to_string())
+}
+
 fn classify_json_value(val: &Value) -> Result<DetectedFormat, String> {
     let obj = val
         .as_object()
@@ -83,11 +97,8 @@ fn classify_json_value(val: &Value) -> Result<DetectedFormat, String> {
         if magic != "STICK_STUDIO_PROJECT" {
             return Err(format!("توقيع الملف (Magic Header) غير صالح: '{}'.", magic));
         }
-        let schema = obj
-            .get("schema_version")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| "رقم إصدار الصيغة (schema_version) مفقود داخل مغلف المشروع.".to_string())?
-            as u32;
+        let schema = checked_schema(obj.get("schema_version")
+            .ok_or_else(|| "رقم إصدار الصيغة (schema_version) مفقود داخل مغلف المشروع.".to_string())?)?;
 
         if !obj.contains_key("project") {
             return Err("مغلف المشروع تالف: حقل 'project' مفقود.".to_string());
@@ -107,11 +118,7 @@ fn classify_json_value(val: &Value) -> Result<DetectedFormat, String> {
 
         let has_modern_keyframes = layers.iter().any(|l| l.get("keyframes").is_some());
         if has_modern_keyframes || obj.contains_key("fps") || obj.contains_key("total_frames") {
-            let schema = obj
-                .get("schema_version")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(2);
+            let schema = obj.get("schema_version").map(checked_schema).transpose()?.unwrap_or(2);
             if schema > PROJECT_SCHEMA_VERSION {
                 return Ok(DetectedFormat::NewerUnsupportedSchema { schema_version: schema });
             }
@@ -132,11 +139,7 @@ fn classify_msgpack_value(val: &Value) -> Result<DetectedFormat, String> {
         if has_legacy_frames {
             return Ok(DetectedFormat::LegacyV1MsgPack);
         }
-        let schema = obj
-            .get("schema_version")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32)
-            .unwrap_or(2);
+        let schema = obj.get("schema_version").map(checked_schema).transpose()?.unwrap_or(2);
         if schema > PROJECT_SCHEMA_VERSION {
             return Ok(DetectedFormat::NewerUnsupportedSchema { schema_version: schema });
         }
@@ -144,4 +147,21 @@ fn classify_msgpack_value(val: &Value) -> Result<DetectedFormat, String> {
     }
 
     Err("ملف MessagePack لا يطابق أي إصدار معروف من مشاريع Stick.".to_string())
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    #[test]
+    fn compressed_payload_is_bounded_during_decode() {
+        let compressed = zstd::encode_all(&vec![42u8; 4096][..], 1).unwrap();
+        assert!(decode_zstd_bounded(&compressed, 1024).is_err());
+        assert_eq!(decode_zstd_bounded(&compressed, 4096).unwrap().len(), 4096);
+    }
+    #[test]
+    fn oversized_schema_cannot_wrap_to_legacy_version() {
+        let raw = br#"{"magic":"STICK_STUDIO_PROJECT","schema_version":4294967297,"project":{}}"#;
+        assert!(sniff_project_bytes(raw).is_err());
+        assert!(sniff_project_bytes(br#"{"layers":[{"keyframes":{}}],"schema_version":4294967298}"#).is_err());
+    }
 }
