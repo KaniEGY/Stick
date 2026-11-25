@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-pub const PROJECT_SCHEMA_VERSION: u32 = 5;
+pub const PROJECT_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum KritaBrushPreset {
