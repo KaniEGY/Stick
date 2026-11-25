@@ -3592,6 +3592,10 @@ impl StickApp {
                     ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
                         .text(tr(lang,"Opacity","الشفافية")));
                     ui.horizontal(|ui|{
+                        ui.label(tr(lang,"Rig color","لون الهيكل"));
+                        ui.color_edit_button_srgba_unmultiplied(&mut self.project.pose_guide.color);
+                    });
+                    ui.horizontal(|ui|{
                         ui.add(egui::DragValue::new(&mut self.project.pose_guide.x).range(0.0..=1.0)
                             .speed(0.01).prefix("X "));
                         ui.add(egui::DragValue::new(&mut self.project.pose_guide.y).range(0.0..=1.0)
@@ -5934,6 +5938,7 @@ impl eframe::App for StickApp {
         let now_time = ctx.input(|i| i.time);
         self.maybe_sync_artist_profile(now_time);
         self.sync_pose_rig_layer();
+        let pose_guide_before_update=self.project.pose_guide.clone();
         if self.profile_sync_pending { ctx.request_repaint_after(Duration::from_secs(4)); }
         apply_user_theme(ctx, &self.config);
         // The shortcut guide is discoverable even when the toolbar is hidden.
@@ -11781,6 +11786,9 @@ impl eframe::App for StickApp {
                         self.show_support_dialog = true;
                     }
                 });
+        }
+        if self.project.pose_guide != pose_guide_before_update {
+            self.has_unsaved_changes=true;
         }
     }
 }
