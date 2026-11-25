@@ -282,6 +282,14 @@ pub fn quick_edit_node_prefer_selection(
     quick_edit_node(strokes,x,y,tolerance)
 }
 
+pub fn vector_centerline(stroke: &Stroke) -> Vec<Point> {
+    if stroke.is_vector && stroke.brush_preset == crate::project::KritaBrushPreset::SmoothInk {
+        smoothed_ink_path(&stroke.points)
+    } else {
+        smoothed_path(&stroke.points)
+    }
+}
+
 pub fn quick_edit_node_in_selection(
     strokes: &mut [Stroke], selected_strokes: &[usize],
     x: f32, y: f32, tolerance: f32,
@@ -327,7 +335,7 @@ pub fn quick_edit_node_in_selection(
     let mut nearest_segment: Option<(usize,usize,f32,f32,f32,f32)> = None;
     for (si,stroke) in strokes.iter().enumerate()
         .filter(|(si,s)|s.is_vector && (selected_strokes.is_empty() || selected_strokes.contains(si))) {
-        let rendered=smoothed_path(&stroke.points);
+        let rendered=vector_centerline(stroke);
         let mut nearest_visible:Option<(f32,f32,f32)>=None;
         for pair in rendered.windows(2) {
             let a=StrokePoint{x:pair[0].0,y:pair[0].1,pressure:1.0};
@@ -448,6 +456,16 @@ mod tests {
         assert!(matches!(quick_edit_node(&mut strokes,x,y,tolerance),
             Some(QuickNodeEdit::Inserted{..})));
         assert_eq!(strokes[0].points.len(),before+1);
+    }
+
+    #[test]
+    fn quick_edit_hits_the_rounded_vector_ink_corner() {
+        let mut stroke = vector(&[(0.,0.),(100.,0.),(100.,100.)]);
+        stroke.brush_preset = crate::project::KritaBrushPreset::SmoothInk;
+        let path = smoothed_ink_path(&stroke.points);
+        let &(x,y) = path.iter().find(|&&(x,y)| x < 95. && y > 5.).unwrap();
+        let mut strokes = [stroke];
+        assert!(matches!(quick_edit_node(&mut strokes,x,y,1.), Some(QuickNodeEdit::Inserted { .. })));
     }
 
     #[test]

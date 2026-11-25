@@ -440,13 +440,7 @@ fn draw_skia_stroke(pixmap: &mut Pixmap, s: &crate::project::Stroke, ts: Transfo
                 let path = centerline.get_or_insert_with(|| {
                     let mut pb = PathBuilder::new();
                     if s.is_vector || s.brush_preset == crate::project::KritaBrushPreset::Fineliner {
-                        let path = if s.is_vector
-                            && s.brush_preset == crate::project::KritaBrushPreset::SmoothInk
-                        {
-                            crate::vector_path::smoothed_ink_path(&s.points)
-                        } else {
-                            crate::vector_path::smoothed_path(&s.points)
-                        };
+                        let path = crate::vector_path::vector_centerline(s);
                         if let Some(&(x,y)) = path.first() {
                             pb.move_to(x,y);
                             for &(x,y) in path.iter().skip(1) { pb.line_to(x,y); }
@@ -970,6 +964,25 @@ mod layer_opacity_tests {
             .pixel(24, 24)
             .expect("center pixel")
             .alpha()
+    }
+
+    #[test]
+    fn every_menu_brush_exports_visible_ink_after_project_roundtrip() {
+        use crate::persistence::{atomic_save, migration, sniff};
+        for (preset, _, _) in KritaBrushPreset::MENU {
+            let mut project = project_with_solid_dab(1.0);
+            let stroke = &mut project.layers[0].keyframes.get_mut(&1).unwrap().strokes[0];
+            stroke.brush_preset = preset;
+            stroke.opacity = preset.default_opacity();
+            stroke.points = [(8.,32.,0.35),(24.,12.,0.7),(40.,32.,1.)].into_iter()
+                .map(|(x,y,pressure)| StrokePoint { x,y,pressure }).collect();
+            let render = |p: &AniProject| render_frame_pixmap(p, 1, true, [0;4]);
+            let pixels = render(&project);
+            assert!(pixels.data().chunks_exact(4).any(|rgba| rgba[3] > 0), "{preset:?} was empty");
+            let bytes = atomic_save::serialize_and_compress_project(&project).unwrap();
+            let (loaded, _) = migration::decode_and_migrate(sniff::sniff_project_bytes(&bytes).unwrap()).unwrap();
+            assert_eq!(pixels.data(), render(&loaded).data(), "{preset:?} changed on reopen");
+        }
     }
 
     #[test]

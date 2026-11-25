@@ -1,10 +1,5 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
-- Update checks can use the official release manifest when the GitHub API is unavailable. Reopening the updater keeps the current download. Windows packaging checks the archive against the built executable.
-- Long Vector Ink strokes retain their endpoints, and taps match the vector line width. Fully transparent strokes no longer create Bucket boundaries. GIF frame delays follow the project timing at common animation frame rates.
-- Host invitations prefer the detected Tailscale address. Both devices need access to the same tailnet. Manual endpoints and LAN invitations remain available.
-- زر التحديث بيكمّل التحميل لو فتحت نافذته تاني، ويقدر يقرأ بيانات الإصدار من ملف مرفق بالإصدار لو واجهة GitHub مش متاحة. اتصلّح اختفاء نهاية خط حبر الفيكتور، وحدود الدلو الوهمية، وتوقيت فريمات GIF. دعوة الأونلاين بتختار عنوان Tailscale لو متصل على الجهازين.
-
 ## Previous changes
 
 - The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.
@@ -16,6 +11,11 @@
 > **Maintainer checklist:** Update the English and Egyptian Arabic notes for **every new release** before publishing. Never claim features that did not pass tests.
 
 ## English (US)
+
+### Bugs fixed
+- Update checks can use the official packaged manifest when both GitHub API routes are unavailable. Reopening the updater keeps the current download. Windows builds check the archive with Stick's installer.
+- Vector Ink keeps the end of long strokes. Node editing follows the rounded ink path, and a tap matches the pen width. Fully transparent ink no longer creates Bucket boundaries. GIF timing now preserves a full second at 24, 30 and 60 fps.
+- Host invites prefer the available Tailscale address. Both devices need access to the same tailnet. You can also select LAN or enter an explicit endpoint.
 
 ### Stability and data protection
 - Imported video frames now use unique persistent folders, preventing a later import from deleting earlier project assets. Oversized clips are rejected instead of silently exceeding timeline capacity.
@@ -421,6 +421,11 @@
 - Added an unsaved-work guard to avoid restarting with an unfinished project.
 
 ## العربية (المصري)
+
+### المشاكل اللي اتصلحت
+- زر التحديث بيكمّل التحميل لو فتحت نافذته تاني، ويقدر يقرأ بيانات الإصدار من الملف الرسمي المرفق لو واجهة GitHub مش متاحة.
+- خط حبر الفيكتور الطويل بيظهر لآخر نقطة، وتعديل العقد بيتبع المنحنى الظاهر. الدلو بيتجاهل الحبر الشفاف، وتوقيت GIF بقى يحافظ على مدة الحركة عند ٢٤ و٣٠ و٦٠ فريم في الثانية.
+- رابط الدعوة بيختار عنوان Tailscale لو متصل. عشان تدخلوا من شبكتين مختلفتين لازم الجهازين يقدروا يتواصلوا على نفس شبكة Tailscale. تقدر برضه تختار LAN أو تدخل عنوان يدوي.
 
 ### تحسين الاستقرار وحماية المشاريع
 - كل فيديو مستورد له مجلد فريمات مستقل ودائم، عشان استيراد فيديو جديد مايمسحش فريمات فيديو قديم. رفض الفيديوهات اللي تتجاوز سعة التايم لاين المتبقية.
