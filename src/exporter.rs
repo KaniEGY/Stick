@@ -1016,14 +1016,16 @@ mod layer_opacity_tests {
         project.width = 12;
         project.height = 12;
         project.background_color = [24, 112, 208, 255];
-        let solid = render_frame_pixmap(&project, 1, false, project.background_color);
-        assert_eq!(solid.pixel(6, 6).unwrap().demultiply().red(), 24);
-        assert_eq!(solid.pixel(6, 6).unwrap().demultiply().green(), 112);
-        assert_eq!(solid.pixel(6, 6).unwrap().demultiply().blue(), 208);
+        let solid = pixmap_to_rgba_image(&render_frame_pixmap(
+            &project, 1, false, project.background_color,
+        ));
+        assert_eq!(solid.get_pixel(6, 6).0, [24, 112, 208, 255]);
 
         project.background_transparent = true;
-        let transparent = render_frame_pixmap(&project, 1, true, project.background_color);
-        assert_eq!(transparent.pixel(6, 6).unwrap().alpha(), 0);
+        let transparent = pixmap_to_rgba_image(&render_frame_pixmap(
+            &project, 1, true, project.background_color,
+        ));
+        assert_eq!(transparent.get_pixel(6, 6).0[3], 0);
     }
 
     fn straight_media_rgba_round_trips_without_darkening() {
