@@ -8824,17 +8824,27 @@ impl eframe::App for StickApp {
             }
         }
         if let Some(idx) = dock_visibility_toggle {
-            self.save_undo_state();
-            if let Some(layer) = self.project.layers.get_mut(idx) {
-                layer.visible=!layer.visible;
-                self.has_unsaved_changes=true;
+            if self.project.layers.get(idx).is_some_and(|layer|layer.is_pose_rig) {
+                self.save_undo_state();
+                self.project.pose_guide.visible=false;
+                self.pose_edit_mode=false;
+                self.pose_drag_joint=None;
+                self.sync_pose_rig_layer();
+            } else {
+                self.save_undo_state();
+                if let Some(layer) = self.project.layers.get_mut(idx) {
+                    layer.visible=!layer.visible;
+                    self.has_unsaved_changes=true;
+                }
             }
         }
         if let Some(idx) = dock_lock_toggle {
-            self.save_undo_state();
-            if let Some(layer) = self.project.layers.get_mut(idx) {
-                layer.locked=!layer.locked;
-                self.has_unsaved_changes=true;
+            if !self.project.layers.get(idx).is_some_and(|layer|layer.is_pose_rig) {
+                self.save_undo_state();
+                if let Some(layer) = self.project.layers.get_mut(idx) {
+                    layer.locked=!layer.locked;
+                    self.has_unsaved_changes=true;
+                }
             }
         }
         if let Some((idx,preset))=layer_effect_request {
