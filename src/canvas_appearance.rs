@@ -13,6 +13,9 @@ pub struct CanvasAppearance {
     pub corner_radius: f32,
     pub shadow_enabled: bool,
     pub workspace_color: [u8; 4],
+    pub paper_override: bool,
+    pub paper_color: [u8; 4],
+    pub paper_checkerboard: bool,
 }
 
 impl Default for CanvasAppearance {
@@ -24,6 +27,9 @@ impl Default for CanvasAppearance {
             corner_radius: 0.0,
             shadow_enabled: false,
             workspace_color: [30, 31, 36, 255],
+            paper_override: false,
+            paper_color: [255, 255, 255, 255],
+            paper_checkerboard: false,
         }
     }
 }
