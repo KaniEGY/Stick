@@ -8764,6 +8764,7 @@ impl eframe::App for StickApp {
             let mut changed=false;
             let mut open_effects=false;
             let mut hide_rig=false;
+            let mut enable_transparency_grid=false;
             if let Some(layer)=self.project.layers.get_mut(idx) {
                 let is_rig=layer.is_pose_rig;
                 let title=if is_rig {
@@ -8827,16 +8828,18 @@ impl eframe::App for StickApp {
                                 let mut opaque = layer.background.is_some();
                                 if ui.checkbox(&mut opaque, tr(lang,"Solid color","لون خلفية")).changed() {
                                     layer.background=if opaque {Some([255,255,255,255])}else{None};
+                                    if !opaque { enable_transparency_grid=true; }
                                     changed=true;
                                 }
                                 if let Some(color) = &mut layer.background {
                                     changed |= ui.color_edit_button_srgba_unmultiplied(color).changed();
                                     if ui.button(tr(lang,"Transparent layer","خلفية لير شفافة")).clicked() {
                                         layer.background=None;
+                                        enable_transparency_grid=true;
                                         changed=true;
                                     }
                                 } else {
-                                    ui.small(tr(lang,"Transparent: lower layers remain visible.","شفافة: الطبقات اللي تحت بتفضل ظاهرة."));
+                                    ui.small(tr(lang,"Transparent: lower layers remain visible; checkerboard is shown behind empty areas.","شفافة: الطبقات اللي تحت بتفضل ظاهرة، ومربعات الشفافية بتظهر في الأماكن الفاضية."));
                                 }
                             });
                             ui.separator();
@@ -8851,6 +8854,11 @@ impl eframe::App for StickApp {
             if changed {
                 self.has_unsaved_changes=true;
                 self.layer_preview_cache.remove(&idx);
+            }
+            if enable_transparency_grid {
+                self.config.canvas_appearance.paper_override=true;
+                self.config.canvas_appearance.paper_checkerboard=true;
+                self.config.save();
             }
             if open_effects { self.layer_effect_window=Some(idx); }
             if hide_rig {
