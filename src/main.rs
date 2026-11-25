@@ -8802,19 +8802,6 @@ impl eframe::App for StickApp {
                                 open_effects=true;
                             }
                         }
-                        if !is_rig {
-                            ui.separator();
-                            ui.strong(tr(lang,"Project export base","خلفية المشروع الأساسية للتصدير"));
-                            changed |= ui.checkbox(&mut self.project.background_transparent,
-                                tr(lang,"Transparent project base","خلفية المشروع شفافة")).changed();
-                            ui.horizontal(|ui| {
-                                ui.label(tr(lang,"Base color","لون الخلفية الأساسية"));
-                                if ui.color_edit_button_srgba_unmultiplied(&mut self.project.background_color).changed() {
-                                    self.project.background_color[3]=255;
-                                    changed=true;
-                                }
-                            });
-                        }
                     });
             } else {
                 open=false;
