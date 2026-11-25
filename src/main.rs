@@ -4627,7 +4627,7 @@ impl StickApp {
         self.layer_rename_index = None;
         self.layer_settings_window = None;
         self.layer_effect_window = None;
-        self.texture_cache.clear;
+        self.texture_cache.clear();
         self.layer_preview_cache.clear();
         self.current_project_path = None;
         self.project = project;
