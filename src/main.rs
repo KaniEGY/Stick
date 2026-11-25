@@ -8531,7 +8531,7 @@ impl eframe::App for StickApp {
                         if layer.effect==LayerEffectPreset::None {
                             egui::Color32::from_gray(150)
                         } else {egui::Color32::from_rgb(255,205,63)});
-                    if ui.add(egui::Button::new(effect_icon).frame(false))
+                    if !layer.is_pose_rig && ui.add(egui::Button::new(effect_icon).frame(false))
                         .on_hover_text(tr(lang,"Layer Effects","مؤثرات اللير")).clicked() {
                         layer_effect_window_request=Some(idx);
                     }
