@@ -84,16 +84,86 @@ pub fn parse_latest_release(json: &Value, current: &str) -> Result<Option<Releas
     Ok(Some(ReleaseInfo { version: version.to_string(), url: url.into(), sha256: digest.to_ascii_lowercase(), size }))
 }
 
+const GITHUB_LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/KaniEGY/Stick/releases/latest";
+const GITHUB_RELEASE_LIST_API: &str =
+    "https://api.github.com/repos/KaniEGY/Stick/releases?per_page=20";
+
+/// Make short, bounded retries against GitHub's API. GitHub/CDN gateways can
+/// occasionally return 502/503/504 even while the release page is available.
+/// A fresh connection and no-cache headers prevent reusing a stale gateway
+/// response; callers may then try an alternate Releases API endpoint.
+fn fetch_github_api_json(url: &str, label: &str) -> Result<Value, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(12))
+        .timeout_read(Duration::from_secs(20))
+        .build();
+    let mut last_error = String::new();
+
+    for attempt in 1..=2 {
+        match agent.get(url)
+            .set("User-Agent", "Stick-Studio-Updater/4.1")
+            .set("Accept", "application/vnd.github+json")
+            .set("Cache-Control", "no-cache")
+            .set("Connection", "close")
+            .call()
+        {
+            Ok(response) => {
+                return response.into_json()
+                    .map_err(|e| format!("{label} returned unreadable JSON: {e}"));
+            }
+            Err(ureq::Error::Status(code, _response)) => {
+                last_error = format!("HTTP {code}");
+            }
+            Err(ureq::Error::Transport(error)) => {
+                last_error = error.to_string();
+            }
+        }
+
+        if attempt < 2 {
+            std::thread::sleep(Duration::from_millis(650 * attempt as u64));
+        }
+    }
+
+    Err(format!("{label} is temporarily unavailable after 2 attempts ({last_error})."))
+}
+
+/// Alternate to /releases/latest. Choose the newest published stable release
+/// by publication timestamp, not array order, and keep the same asset/hash
+/// validation as the primary update path.
+fn parse_latest_release_list(json: &Value, installed: &str) -> Result<Option<ReleaseInfo>, String> {
+    let releases = json.as_array()
+        .ok_or("GitHub returned an invalid Releases list.")?;
+    let latest = releases.iter()
+        .filter(|release| {
+            !release.get("draft").and_then(Value::as_bool).unwrap_or(false)
+                && !release.get("prerelease").and_then(Value::as_bool).unwrap_or(false)
+        })
+        .max_by(|a, b| {
+            a.get("published_at").and_then(Value::as_str)
+                .cmp(&b.get("published_at").and_then(Value::as_str))
+        })
+        .ok_or("GitHub did not return a published stable release.")?;
+    parse_latest_release(latest, installed)
+}
+
 pub fn check_online(installed: &str) -> Result<Option<ReleaseInfo>, String> {
-    let response = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(25)).build()
-        .get("https://api.github.com/repos/KaniEGY/Stick/releases/latest")
-        .set("User-Agent", "Stick-Studio-Updater")
-        .set("Accept", "application/vnd.github+json")
-        .call().map_err(|e| format!("Couldn't reach GitHub: {e}"))?;
-    let json: Value = response.into_json()
-        .map_err(|e| format!("GitHub returned an unreadable response: {e}"))?;
-    parse_latest_release(&json, installed)
+    match fetch_github_api_json(GITHUB_LATEST_RELEASE_API, "GitHub latest-release check") {
+        Ok(json) => parse_latest_release(&json, installed),
+        Err(primary_error) => {
+            // The dedicated /latest endpoint sometimes responds with HTTP 504.
+            // The releases collection is a separate API route and often remains
+            // available; it still goes through signature/hash/size validation.
+            match fetch_github_api_json(GITHUB_RELEASE_LIST_API, "GitHub Releases fallback") {
+                Ok(json) => parse_latest_release_list(&json, installed).map_err(|fallback_error| {
+                    format!("The latest-release check failed ({primary_error}); fallback validation failed ({fallback_error}).")
+                }),
+                Err(fallback_error) => Err(format!(
+                    "Couldn't check for Stick updates. GitHub's update service is temporarily unavailable. {primary_error} {fallback_error} Please try again in a moment."
+                )),
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -128,13 +198,10 @@ pub fn parse_rollback_history(json: &Value, installed: &str) -> Result<Vec<Archi
 }
 
 pub fn fetch_rollback_history(installed: &str) -> Result<Vec<ArchivedRelease>, String> {
-    let response = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(25)).build()
-        .get("https://api.github.com/repos/KaniEGY/Stick/releases?per_page=100")
-        .set("User-Agent", "Stick-Studio-Updater")
-        .set("Accept", "application/vnd.github+json")
-        .call().map_err(|e| format!("Couldn't reach GitHub Releases: {e}"))?;
-    let json: Value = response.into_json().map_err(|e| format!("Invalid GitHub response: {e}"))?;
+    let json = fetch_github_api_json(
+        "https://api.github.com/repos/KaniEGY/Stick/releases?per_page=100",
+        "GitHub release history",
+    )?;
     parse_rollback_history(&json, installed)
 }
 
@@ -514,6 +581,31 @@ mod tests {
         r["assets"][0]["digest"] = Value::Null;
         assert!(parse_latest_release(&r,"4.1.0.72").is_err());
     }
+    #[test] fn latest_release_fallback_chooses_newest_published_stable_release() {
+        let mut older = fixture("v4.1.0.80", &"a".repeat(64));
+        older["published_at"] = Value::String("2026-11-20T09:00:00Z".into());
+        let mut newer = fixture("v4.1.0.95", &"b".repeat(64));
+        newer["published_at"] = Value::String("2026-11-21T09:00:00Z".into());
+        let mut prerelease = fixture("v9.0.0", &"c".repeat(64));
+        prerelease["published_at"] = Value::String("2026-11-22T09:00:00Z".into());
+        prerelease["prerelease"] = Value::Bool(true);
+        let mut draft = fixture("v10.0.0", &"d".repeat(64));
+        draft["published_at"] = Value::String("2026-11-23T09:00:00Z".into());
+        draft["draft"] = Value::Bool(true);
+
+        let list = serde_json::json!([older, draft, prerelease, newer]);
+        let release = parse_latest_release_list(&list, "4.1.0.90").unwrap().unwrap();
+        assert_eq!(release.version, "4.1.0.95");
+        assert_eq!(release.sha256, "b".repeat(64));
+    }
+
+    #[test] fn latest_release_fallback_returns_none_when_current_is_latest_stable() {
+        let mut current = fixture("v4.1.0.95", &"b".repeat(64));
+        current["published_at"] = Value::String("2026-11-21T09:00:00Z".into());
+        let list = serde_json::json!([current]);
+        assert!(parse_latest_release_list(&list, "4.1.0.95").unwrap().is_none());
+    }
+
     #[test] fn rollback_history_is_by_publication_and_excludes_current_or_newer() {
         let mut latest = fixture("v4.1.0.140", &"e".repeat(64));
         latest["published_at"] = Value::String("2026-11-17T13:00:00Z".into());
