@@ -1927,6 +1927,7 @@ struct StickApp {
     layer_rename_buffer: String,
     layer_filter: String,
     layer_effect_window: Option<usize>,
+    layer_settings_window: Option<usize>,
     layer_clipboard: Option<Layer>,
     symmetry_mode: SymmetryMode,
     stabilizer_strength: f32,
@@ -1963,7 +1964,6 @@ struct StickApp {
     last_selection_polygon: Vec<egui::Pos2>,
     custom_anchor_offset: egui::Vec2,
     brush_color: [u8; 4],
-    stage_bg_color: [u8; 4],
     brush_size: f32,
     vector_pen_size: f32,
     eraser_full_size: f32,
@@ -2002,7 +2002,6 @@ struct StickApp {
     show_assets_library: bool,
     show_pose_guide: bool,
     drawing_assets: drawing_assets::DrawingAssets,
-    pose_guide: pose_guide::PoseGuide,
     pose_edit_mode: bool,
     pose_drag_joint: Option<pose_guide::PoseJoint>,
     auto_action_recording: bool,
@@ -2149,6 +2148,7 @@ impl StickApp {
             layer_rename_buffer: String::new(),
             layer_filter: String::new(),
             layer_effect_window: None,
+            layer_settings_window: None,
             layer_clipboard: None,
             symmetry_mode: SymmetryMode::Off,
             stabilizer_strength: 0.18,
@@ -2185,7 +2185,6 @@ impl StickApp {
             last_selection_polygon: Vec::new(),
             custom_anchor_offset: egui::Vec2::ZERO,
             brush_color: [0, 0, 0, 255],
-            stage_bg_color: [255, 255, 255, 255],
             brush_size: 7.0,
             vector_pen_size: 7.0,
             eraser_full_size: 35.0,
@@ -2224,7 +2223,6 @@ impl StickApp {
             show_assets_library: false,
             show_pose_guide: false,
             drawing_assets: drawing_assets::DrawingAssets::load(),
-            pose_guide: pose_guide::PoseGuide::default(),
             pose_edit_mode: false,
             pose_drag_joint: None,
             auto_action_recording: false,
@@ -3011,7 +3009,7 @@ impl StickApp {
         self.project.total_frames = self.timeline_length;
         let proj_clone = self.project.clone();
         let fmt = self.selected_export_format;
-        let bg = self.stage_bg_color;
+        let bg = self.project.background_color;
         let sfx_ok = self.config.sound_effects_enabled;
         let state_arc = Arc::clone(&self.export_task_state);
         *state_arc.lock().unwrap_or_else(|poison| poison.into_inner()) = ExportTaskState::Running("جاري تصدير الفريمات بالتوازي فائق السرعة...".to_string());
@@ -3418,7 +3416,7 @@ impl StickApp {
                         ui.horizontal_wrapped(|ui|{
                             self.pose_visibility_checkbox(ui, tr(lang,"Visible","ظاهر"));
                             self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
-                            let depth_label=if self.pose_guide.in_front {
+                            let depth_label=if self.project.pose_guide.in_front {
                                 tr(lang,"Front","أمام")
                             } else {
                                 tr(lang,"Back","خلف")
@@ -3427,21 +3425,21 @@ impl StickApp {
                                 "Front: the rig stays over your drawing. Back: your drawing appears over the rig.",
                                 "أمام: الهيكل فوق الرسم. خلف: الرسم بيظهر فوق الهيكل."
                             )).clicked() {
-                                self.pose_guide.in_front=!self.pose_guide.in_front;
+                                self.project.pose_guide.in_front=!self.project.pose_guide.in_front;
                             }
                         });
-                        ui.add(egui::Slider::new(&mut self.pose_guide.scale,0.25..=3.0)
+                        ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
                             .text(tr(lang,"Overall size","الحجم العام")));
-                        if ui.add(egui::Slider::new(&mut self.pose_guide.head_scale,0.45..=2.0)
+                        if ui.add(egui::Slider::new(&mut self.project.pose_guide.head_scale,0.45..=2.0)
                             .text(tr(lang,"Head size","حجم الرأس"))).changed()
-                        {self.pose_guide.mark_custom();}
-                        ui.add(egui::Slider::new(&mut self.pose_guide.opacity,0.05..=1.0)
+                        {self.project.pose_guide.mark_custom();}
+                        ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
                             .text(tr(lang,"Opacity","الشفافية")));
                         ui.horizontal(|ui|{
                             ui.label(tr(lang,"Position","المكان"));
-                            ui.add(egui::DragValue::new(&mut self.pose_guide.x).range(0.0..=1.0)
+                            ui.add(egui::DragValue::new(&mut self.project.pose_guide.x).range(0.0..=1.0)
                                 .speed(0.01).prefix("X "));
-                            ui.add(egui::DragValue::new(&mut self.pose_guide.y).range(0.0..=1.0)
+                            ui.add(egui::DragValue::new(&mut self.project.pose_guide.y).range(0.0..=1.0)
                                 .speed(0.01).prefix("Y "));
                         });
 
@@ -3452,52 +3450,52 @@ impl StickApp {
                             for preset in pose_guide::BODY_PRESETS {
                                 let (en,ar)=preset.labels();
                                 if ui.selectable_label(
-                                    self.pose_guide.body_preset==preset,tr(lang,en,ar)
+                                    self.project.pose_guide.body_preset==preset,tr(lang,en,ar)
                                 ).clicked(){chosen=Some(preset);}
                             }
                         });
                         if let Some(preset)=chosen {
-                            self.pose_guide.apply_body_preset(preset);
-                            self.pose_guide.visible=true;
+                            self.project.pose_guide.apply_body_preset(preset);
+                            self.project.pose_guide.visible=true;
                         }
 
                         ui.separator();
                         ui.strong(tr(lang,"Body Proportions","نِسَب الجسم"));
                         let mut body_changed=false;
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.torso_length,0.55..=1.65)
+                            &mut self.project.pose_guide.torso_length,0.55..=1.65)
                             .text(tr(lang,"Torso length","طول الجذع"))).changed();
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.shoulder_width,0.55..=1.65)
+                            &mut self.project.pose_guide.shoulder_width,0.55..=1.65)
                             .text(tr(lang,"Shoulder width","عرض الكتفين"))).changed();
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.hip_width,0.55..=1.70)
+                            &mut self.project.pose_guide.hip_width,0.55..=1.70)
                             .text(tr(lang,"Hip width","عرض الحوض"))).changed();
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.upper_arm_length,0.55..=1.60)
+                            &mut self.project.pose_guide.upper_arm_length,0.55..=1.60)
                             .text(tr(lang,"Upper arm length","طول الذراع"))).changed();
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.forearm_length,0.55..=1.60)
+                            &mut self.project.pose_guide.forearm_length,0.55..=1.60)
                             .text(tr(lang,"Forearm length","طول الساعد"))).changed();
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.thigh_length,0.55..=1.70)
+                            &mut self.project.pose_guide.thigh_length,0.55..=1.70)
                             .text(tr(lang,"Thigh length","طول الفخذ"))).changed();
                         body_changed|=ui.add(egui::Slider::new(
-                            &mut self.pose_guide.shin_length,0.55..=1.70)
+                            &mut self.project.pose_guide.shin_length,0.55..=1.70)
                             .text(tr(lang,"Shin length","طول الساق"))).changed();
-                        if body_changed {self.pose_guide.mark_custom();}
+                        if body_changed {self.project.pose_guide.mark_custom();}
 
                         ui.collapsing(tr(lang,"Pose angles","زوايا الوضعية"),|ui|{
                             for (label,value) in [
-                                (tr(lang,"Torso","الجذع"),&mut self.pose_guide.torso_tilt_deg),
-                                (tr(lang,"Left upper arm","الذراع الشمال"),&mut self.pose_guide.left_arm_deg),
-                                (tr(lang,"Right upper arm","الذراع اليمين"),&mut self.pose_guide.right_arm_deg),
-                                (tr(lang,"Left forearm","الساعد الشمال"),&mut self.pose_guide.left_forearm_deg),
-                                (tr(lang,"Right forearm","الساعد اليمين"),&mut self.pose_guide.right_forearm_deg),
-                                (tr(lang,"Left thigh","الفخذ الشمال"),&mut self.pose_guide.left_leg_deg),
-                                (tr(lang,"Right thigh","الفخذ اليمين"),&mut self.pose_guide.right_leg_deg),
-                                (tr(lang,"Left shin","الساق الشمال"),&mut self.pose_guide.left_shin_deg),
-                                (tr(lang,"Right shin","الساق اليمين"),&mut self.pose_guide.right_shin_deg),
+                                (tr(lang,"Torso","الجذع"),&mut self.project.pose_guide.torso_tilt_deg),
+                                (tr(lang,"Left upper arm","الذراع الشمال"),&mut self.project.pose_guide.left_arm_deg),
+                                (tr(lang,"Right upper arm","الذراع اليمين"),&mut self.project.pose_guide.right_arm_deg),
+                                (tr(lang,"Left forearm","الساعد الشمال"),&mut self.project.pose_guide.left_forearm_deg),
+                                (tr(lang,"Right forearm","الساعد اليمين"),&mut self.project.pose_guide.right_forearm_deg),
+                                (tr(lang,"Left thigh","الفخذ الشمال"),&mut self.project.pose_guide.left_leg_deg),
+                                (tr(lang,"Right thigh","الفخذ اليمين"),&mut self.project.pose_guide.right_leg_deg),
+                                (tr(lang,"Left shin","الساق الشمال"),&mut self.project.pose_guide.left_shin_deg),
+                                (tr(lang,"Right shin","الساق اليمين"),&mut self.project.pose_guide.right_shin_deg),
                             ] {
                                 ui.add(egui::Slider::new(value,-180.0..=180.0).text(label));
                             }
@@ -3505,15 +3503,15 @@ impl StickApp {
 
                         ui.horizontal_wrapped(|ui|{
                             if ui.button(tr(lang,"Reset pose","إعادة الوضعية")).clicked(){
-                                self.pose_guide.reset_pose_angles();
-                                self.pose_guide.visible=true;
+                                self.project.pose_guide.reset_pose_angles();
+                                self.project.pose_guide.visible=true;
                                 self.pose_drag_joint=None;
                             }
                             if ui.button(tr(lang,"Classic body","الجسم الكلاسيكي")).clicked(){
-                                self.pose_guide.apply_body_preset(pose_guide::BodyPreset::Classic);
+                                self.project.pose_guide.apply_body_preset(pose_guide::BodyPreset::Classic);
                             }
                             if ui.button(tr(lang,"Center","توسيط")).clicked(){
-                                self.pose_guide.x=0.5;self.pose_guide.y=0.55;
+                                self.project.pose_guide.x=0.5;self.project.pose_guide.y=0.55;
                             }
                         });
                         ui.small(tr(lang,
@@ -3530,44 +3528,44 @@ impl StickApp {
                     ui.horizontal_wrapped(|ui|{
                         self.pose_visibility_checkbox(ui, tr(lang,"Visible","ظاهر"));
                         self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
-                        let depth_label=if self.pose_guide.in_front {
+                        let depth_label=if self.project.pose_guide.in_front {
                             tr(lang,"Front","أمام")
                         } else {
                             tr(lang,"Back","خلف")
                         };
                         if ui.button(depth_label).clicked() {
-                            self.pose_guide.in_front=!self.pose_guide.in_front;
+                            self.project.pose_guide.in_front=!self.project.pose_guide.in_front;
                         }
                     });
-                    ui.add(egui::Slider::new(&mut self.pose_guide.scale,0.25..=3.0)
+                    ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
                         .text(tr(lang,"Scale","الحجم")));
-                    ui.add(egui::Slider::new(&mut self.pose_guide.head_scale,0.45..=2.0)
+                    ui.add(egui::Slider::new(&mut self.project.pose_guide.head_scale,0.45..=2.0)
                         .text(tr(lang,"Head size","حجم الرأس")));
-                    ui.add(egui::Slider::new(&mut self.pose_guide.opacity,0.05..=1.0)
+                    ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
                         .text(tr(lang,"Opacity","الشفافية")));
                     ui.horizontal(|ui|{
-                        ui.add(egui::DragValue::new(&mut self.pose_guide.x).range(0.0..=1.0)
+                        ui.add(egui::DragValue::new(&mut self.project.pose_guide.x).range(0.0..=1.0)
                             .speed(0.01).prefix("X "));
-                        ui.add(egui::DragValue::new(&mut self.pose_guide.y).range(0.0..=1.0)
+                        ui.add(egui::DragValue::new(&mut self.project.pose_guide.y).range(0.0..=1.0)
                             .speed(0.01).prefix("Y "));
                     });
                     ui.separator();
                     for (label,value) in [
-                        (tr(lang,"Torso","الجذع"),&mut self.pose_guide.torso_tilt_deg),
-                        (tr(lang,"Left upper arm","الذراع الشمال"),&mut self.pose_guide.left_arm_deg),
-                        (tr(lang,"Right upper arm","الذراع اليمين"),&mut self.pose_guide.right_arm_deg),
-                        (tr(lang,"Left forearm","الساعد الشمال"),&mut self.pose_guide.left_forearm_deg),
-                        (tr(lang,"Right forearm","الساعد اليمين"),&mut self.pose_guide.right_forearm_deg),
-                        (tr(lang,"Left thigh","الفخذ الشمال"),&mut self.pose_guide.left_leg_deg),
-                        (tr(lang,"Right thigh","الفخذ اليمين"),&mut self.pose_guide.right_leg_deg),
-                        (tr(lang,"Left shin","الساق الشمال"),&mut self.pose_guide.left_shin_deg),
-                        (tr(lang,"Right shin","الساق اليمين"),&mut self.pose_guide.right_shin_deg),
+                        (tr(lang,"Torso","الجذع"),&mut self.project.pose_guide.torso_tilt_deg),
+                        (tr(lang,"Left upper arm","الذراع الشمال"),&mut self.project.pose_guide.left_arm_deg),
+                        (tr(lang,"Right upper arm","الذراع اليمين"),&mut self.project.pose_guide.right_arm_deg),
+                        (tr(lang,"Left forearm","الساعد الشمال"),&mut self.project.pose_guide.left_forearm_deg),
+                        (tr(lang,"Right forearm","الساعد اليمين"),&mut self.project.pose_guide.right_forearm_deg),
+                        (tr(lang,"Left thigh","الفخذ الشمال"),&mut self.project.pose_guide.left_leg_deg),
+                        (tr(lang,"Right thigh","الفخذ اليمين"),&mut self.project.pose_guide.right_leg_deg),
+                        (tr(lang,"Left shin","الساق الشمال"),&mut self.project.pose_guide.left_shin_deg),
+                        (tr(lang,"Right shin","الساق اليمين"),&mut self.project.pose_guide.right_shin_deg),
                     ] {
                         ui.add(egui::Slider::new(value,-180.0..=180.0).text(label));
                     }
                     if ui.button(tr(lang,"Reset pose","رجّع الوضعية")).clicked(){
-                        self.pose_guide=pose_guide::PoseGuide::default();
-                        self.pose_guide.visible=true;
+                        self.project.pose_guide=pose_guide::PoseGuide::default();
+                        self.project.pose_guide.visible=true;
                     }
                     ui.small(tr(lang,
                         "This is a fast articulated drawing reference and is never exported.",
@@ -3716,26 +3714,97 @@ impl StickApp {
         Some(((value-min)/(max-min)*100.0).clamp(0.0,100.0))
     }
 
+    fn sync_pose_rig_layer(&mut self) {
+        let existing = self.project.layers.iter().position(|layer| layer.is_pose_rig);
+        if self.project.pose_guide.visible {
+            if let Some(current) = existing {
+                let target = if self.project.pose_guide.in_front { 0 } else { self.project.layers.len() - 1 };
+                if current != target {
+                    let selected = self.active_layer_idx;
+                    let rig = self.project.layers.remove(current);
+                    let selected_after_remove = if selected == current {
+                        None
+                    } else {
+                        Some(if current < selected { selected - 1 } else { selected })
+                    };
+                    let insert_at = if self.project.pose_guide.in_front { 0 } else { self.project.layers.len() };
+                    self.project.layers.insert(insert_at, rig);
+                    self.active_layer_idx = selected_after_remove.map_or(insert_at, |idx| {
+                        if insert_at <= idx { idx + 1 } else { idx }
+                    });
+                    self.has_unsaved_changes = true;
+                }
+            } else {
+                let mut keyframes = HashMap::new();
+                keyframes.insert(1, FrameData::default());
+                let rig = Layer {
+                    name: "Pose Rig".to_string(),
+                    visible: true,
+                    locked: true,
+                    is_guide: true,
+                    is_pose_rig: true,
+                    is_reference: false,
+                    xp_first_paint_rewarded: false,
+                    opacity: 1.0,
+                    effect: LayerEffectPreset::None,
+                    keyframes,
+                };
+                let insert_at = if self.project.pose_guide.in_front { 0 } else { self.project.layers.len() };
+                if insert_at <= self.active_layer_idx { self.active_layer_idx += 1; }
+                self.project.layers.insert(insert_at, rig);
+                self.has_unsaved_changes = true;
+            }
+        } else if let Some(index) = existing {
+            self.project.layers.remove(index);
+            if self.active_layer_idx == index {
+                self.active_layer_idx = 0;
+            } else if self.active_layer_idx > index {
+                self.active_layer_idx -= 1;
+            }
+            self.active_layer_idx = self.active_layer_idx.min(self.project.layers.len().saturating_sub(1));
+            self.has_unsaved_changes = true;
+        }
+    }
+
+    fn set_pose_rig_depth(&mut self, in_front: bool) {
+        if self.project.pose_guide.in_front == in_front { return; }
+        self.project.pose_guide.in_front = in_front;
+        self.sync_pose_rig_layer();
+        self.has_unsaved_changes = true;
+    }
+
     fn toggle_pose_rig(&mut self) {
-        let show = !self.pose_guide.visible;
-        self.pose_guide.visible = show;
+        let show = !self.project.pose_guide.visible;
+        self.project.pose_guide.visible = show;
         self.pose_edit_mode = show;
         self.pose_drag_joint = None;
+        self.sync_pose_rig_layer();
+        self.has_unsaved_changes = true;
     }
 
     fn pose_visibility_checkbox(&mut self, ui: &mut egui::Ui, label: String) {
-        if ui.checkbox(&mut self.pose_guide.visible, label).changed() && !self.pose_guide.visible {
-            self.pose_edit_mode = false;
-            self.pose_drag_joint = None;
+        let mut visible = self.project.pose_guide.visible;
+        if ui.checkbox(&mut visible, label).changed() {
+            self.project.pose_guide.visible = visible;
+            if !visible {
+                self.pose_edit_mode = false;
+                self.pose_drag_joint = None;
+            }
+            self.sync_pose_rig_layer();
+            self.has_unsaved_changes = true;
         }
     }
 
     fn pose_edit_checkbox(&mut self, ui: &mut egui::Ui, label: String) {
-        if ui.checkbox(&mut self.pose_edit_mode, label).changed() {
-            if self.pose_edit_mode {
-                self.pose_guide.visible = true;
+        let mut edit = self.pose_edit_mode;
+        if ui.checkbox(&mut edit, label).changed() {
+            self.pose_edit_mode = edit;
+            if edit && !self.project.pose_guide.visible {
+                self.project.pose_guide.visible = true;
             }
             self.pose_drag_joint = None;
+            self.sync_pose_rig_layer();
+            self.has_unsaved_changes = true;
         }
     }
 
@@ -4547,7 +4616,7 @@ impl StickApp {
                 y: (self.project.height as f32-height)*0.5,
                 width, height, rotation_deg: 0.0, flip_h: false, flip_v: false });
             kf.insert(self.current_frame, fd);
-            self.project.layers.insert(0, Layer { name: format!("Img_{}", img_name), visible: true, locked: false, is_guide: false, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
+            self.project.layers.insert(0, Layer { name: format!("Img_{}", img_name), visible: true, locked: false, is_guide: false, is_pose_rig: false, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
             self.active_layer_idx = 0;
             self.clear_cel_selection();
             self.selected_media_idx = Some(0);
@@ -4599,7 +4668,7 @@ impl StickApp {
                     fd.media_items.push(MediaItem { path: f_path.to_string_lossy().to_string(), media_type: MediaType::VideoFrame, x: 0.0, y: 0.0, width: self.project.width as f32, height: self.project.height as f32, rotation_deg: 0.0, flip_h: false, flip_v: false });
                     kf.insert(self.current_frame + i, fd);
                 }
-                self.project.layers.insert(0, Layer { name: "Video_Layer".to_string(), visible: true, locked: false, is_guide: false, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
+                self.project.layers.insert(0, Layer { name: "Video_Layer".to_string(), visible: true, locked: false, is_guide: false, is_pose_rig: false, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
                 self.active_layer_idx = 0;
                 self.clear_cel_selection();
                 self.selected_media_idx = Some(0);
@@ -5816,6 +5885,7 @@ impl eframe::App for StickApp {
         self.poll_cloud_job(ctx);
         let now_time = ctx.input(|i| i.time);
         self.maybe_sync_artist_profile(now_time);
+        self.sync_pose_rig_layer();
         if self.profile_sync_pending { ctx.request_repaint_after(Duration::from_secs(4)); }
         apply_user_theme(ctx, &self.config);
         // The shortcut guide is discoverable even when the toolbar is hidden.
@@ -6539,7 +6609,7 @@ impl eframe::App for StickApp {
                                     let ext = self.selected_image_format.ext();
                                     if let Some(mut p) = rfd::FileDialog::new().add_filter("Img", &[ext]).set_file_name(&format!("Stick.{}", ext)).save_file() {
                                         if p.extension().is_none() { p.set_extension(ext); }
-                                        if exporter::export_single_image_format(&self.project, self.current_frame, &p, self.selected_image_format, self.stage_bg_color).is_ok() {
+                                        if exporter::export_single_image_format(&self.project, self.current_frame, &p, self.selected_image_format, self.project.background_color).is_ok() {
                                             self.play_sfx(SfxType::ExportSuccess);
                                             *self.export_task_state.lock().unwrap_or_else(|poison| poison.into_inner()) =
                                                 ExportTaskState::Done("تم حفظ الصورة!".to_string(), p.clone());
@@ -7815,7 +7885,7 @@ impl eframe::App for StickApp {
                     if ui.small_button(tr(lang,"Assets","المكتبة"))
                         .clicked(){
                             self.show_assets_library=true;
-                            self.pose_guide.visible=true;
+                            self.project.pose_guide.visible=true;
                         }
                     let (pose_rect,pose_response)=ui.allocate_exact_size(
                         egui::vec2(36.0,28.0),egui::Sense::click());
@@ -7823,10 +7893,10 @@ impl eframe::App for StickApp {
                         self.toggle_pose_rig();
                     }
                     ui.painter().rect_filled(pose_rect,6.0,
-                        if self.pose_guide.visible {egui::Color32::from_rgb(65,58,28)}
+                        if self.project.pose_guide.visible {egui::Color32::from_rgb(65,58,28)}
                         else if pose_response.hovered(){egui::Color32::from_rgb(55,73,84)}
                         else{egui::Color32::from_rgb(40,46,52)});
-                    draw_pose_rig_icon(ui.painter(),pose_rect.shrink(3.0),self.pose_guide.visible);
+                    draw_pose_rig_icon(ui.painter(),pose_rect.shrink(3.0),self.project.pose_guide.visible);
                     let pose_response=pose_response.on_hover_text(tr(lang,
                         "Click to show and move the rig. Click again to hide it.",
                         "اضغط عشان تظهر الهيكل وتحرّك مفاصله. اضغط تاني عشان تخفيه."));
@@ -7835,7 +7905,7 @@ impl eframe::App for StickApp {
                         ui.horizontal_wrapped(|ui|{
                             self.pose_visibility_checkbox(ui, tr(lang,"Visible","ظاهر"));
                             self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
-                            let depth_label=if self.pose_guide.in_front {
+                            let depth_label=if self.project.pose_guide.in_front {
                                 tr(lang,"Front","أمام")
                             } else {
                                 tr(lang,"Back","خلف")
@@ -7844,25 +7914,25 @@ impl eframe::App for StickApp {
                                 "Front: rig over drawing. Back: drawing over rig.",
                                 "أمام: الهيكل فوق الرسم. خلف: الرسم فوق الهيكل."
                             )).clicked() {
-                                self.pose_guide.in_front=!self.pose_guide.in_front;
+                                self.project.pose_guide.in_front=!self.project.pose_guide.in_front;
                             }
                         });
-                        ui.add(egui::Slider::new(&mut self.pose_guide.scale,0.25..=3.0)
+                        ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
                             .text(tr(lang,"Body scale","حجم الجسم")));
-                        ui.add(egui::Slider::new(&mut self.pose_guide.head_scale,0.45..=2.0)
+                        ui.add(egui::Slider::new(&mut self.project.pose_guide.head_scale,0.45..=2.0)
                             .text(tr(lang,"Head scale","حجم الرأس")));
-                        ui.add(egui::Slider::new(&mut self.pose_guide.opacity,0.05..=1.0)
+                        ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
                             .text(tr(lang,"Opacity","الشفافية")));
                         if ui.button(tr(lang,"Reset pose","إعادة الوضعية")).clicked(){
-                            self.pose_guide=pose_guide::PoseGuide::default();
-                            self.pose_guide.visible=true;
+                            self.project.pose_guide=pose_guide::PoseGuide::default();
+                            self.project.pose_guide.visible=true;
                             self.pose_edit_mode=true;
                             self.pose_drag_joint=None;
                             ui.close_menu();
                         }
                         if ui.button(tr(lang,"Advanced rig settings","إعدادات الهيكل")).clicked(){
                             self.show_assets_library=true;
-                            self.pose_guide.visible=true;
+                            self.project.pose_guide.visible=true;
                             ui.close_menu();
                         }
                     });
@@ -8044,6 +8114,9 @@ impl eframe::App for StickApp {
         let mut rename_layer_index: Option<usize> = None;
         let mut layer_effect_request: Option<(usize,LayerEffectPreset)> = None;
         let mut layer_effect_window_request: Option<usize> = None;
+        let mut layer_settings_window_request: Option<usize> = None;
+        let mut pose_depth_request: Option<bool> = None;
+        let mut background_settings_changed = false;
         if self.config.show_right_dock {
         egui::SidePanel::right("right_panel").resizable(true).default_width(376.0)
             .min_width(285.0).show(ctx, |ui| {
@@ -8268,7 +8341,7 @@ impl eframe::App for StickApp {
                     self.save_undo_state();
                     let mut kf = HashMap::new();
                     kf.insert(1, Default::default());
-                    self.project.layers.insert(0, Layer { name: format!("Layer_{}", self.project.layers.len() + 1), visible: true, locked: false, is_guide: false, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
+                    self.project.layers.insert(0, Layer { name: format!("Layer_{}", self.project.layers.len() + 1), visible: true, locked: false, is_guide: false, is_pose_rig: false, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
                     self.active_layer_idx = 0;
                     self.has_unsaved_changes = true;
                 }
@@ -10045,7 +10118,7 @@ impl eframe::App for StickApp {
                 self.last_secondary_pointer_pos = None;
             }
 
-            let bg = self.stage_bg_color;
+            let bg = self.project.background_color;
             let (sin_r, cos_r) = self.canvas_rotation_deg.to_radians().sin_cos();
             let (fh, fv) = (self.canvas_flip_h, self.canvas_flip_v);
             let to_screen = |p: egui::Pos2| -> egui::Pos2 {
@@ -10208,18 +10281,18 @@ impl eframe::App for StickApp {
                 }
             }
 
-            if self.pose_edit_mode && self.pose_guide.visible && !any_modal_open
+            if self.pose_edit_mode && self.project.pose_guide.visible && !any_modal_open
                 && self.canvas_quick_menu.is_none() {
                 if pointer_pressed {
                     if let Some(pos)=press_origin.filter(|_| press_started_on_canvas) {
                         self.pose_drag_joint=pose_guide::hit_test_joint(
-                            &self.pose_guide,(stage_w,stage_h),to_stage(pos),
+                            &self.project.pose_guide,(stage_w,stage_h),to_stage(pos),
                             (15.0/scale.max(0.05)).max(2.0));
                     }
                 }
                 if pointer_down {
                     if let (Some(joint),Some(pos))=(self.pose_drag_joint,pointer_pos) {
-                        pose_guide::drag_joint(&mut self.pose_guide,joint,(stage_w,stage_h),to_stage(pos));
+                        pose_guide::drag_joint(&mut self.project.pose_guide,joint,(stage_w,stage_h),to_stage(pos));
                         ctx.request_repaint();
                     }
                 }
@@ -10927,8 +11000,8 @@ impl eframe::App for StickApp {
                 }
             }
 
-            if self.pose_guide.visible && !self.pose_guide.in_front {
-                pose_guide::draw_active(&paper_painter,&self.pose_guide,(stage_w,stage_h),&to_screen,
+            if self.project.pose_guide.visible && !self.project.pose_guide.in_front {
+                pose_guide::draw_active(&paper_painter,&self.project.pose_guide,(stage_w,stage_h),&to_screen,
                     if self.pose_edit_mode {self.pose_drag_joint}else{None});
             }
 
@@ -11244,8 +11317,8 @@ impl eframe::App for StickApp {
                     draw_stroke_pro(&painter, &preview, None, 1.0, scale, 0.0, 0.0, &to_screen);
                 }
             }
-            if self.pose_guide.visible && self.pose_guide.in_front {
-                pose_guide::draw_active(&paper_painter,&self.pose_guide,(stage_w,stage_h),&to_screen,
+            if self.project.pose_guide.visible && self.project.pose_guide.in_front {
+                pose_guide::draw_active(&paper_painter,&self.project.pose_guide,(stage_w,stage_h),&to_screen,
                     if self.pose_edit_mode {self.pose_drag_joint}else{None});
             }
 
@@ -11571,16 +11644,16 @@ mod tool_discovery_tests {
     fn rig_toggle_preserves_pose_and_releases_the_drawing_tools() {
         let mut app = StickApp::new(&egui::Context::default());
         app.toggle_pose_rig();
-        assert!(app.pose_guide.visible && app.pose_edit_mode);
+        assert!(app.project.pose_guide.visible && app.pose_edit_mode);
         app.pose_drag_joint = Some(pose_guide::PoseJoint::Root);
-        pose_guide::drag_joint(&mut app.pose_guide, pose_guide::PoseJoint::Root,
+        pose_guide::drag_joint(&mut app.project.pose_guide, pose_guide::PoseJoint::Root,
             (400.0, 400.0), egui::pos2(140.0, 240.0));
-        let moved = (app.pose_guide.x, app.pose_guide.y);
+        let moved = (app.project.pose_guide.x, app.project.pose_guide.y);
         assert_ne!(moved, (0.5, 0.55));
         app.toggle_pose_rig();
-        assert!(!app.pose_guide.visible && !app.pose_edit_mode && app.pose_drag_joint.is_none());
+        assert!(!app.project.pose_guide.visible && !app.pose_edit_mode && app.pose_drag_joint.is_none());
         app.toggle_pose_rig();
-        assert_eq!((app.pose_guide.x, app.pose_guide.y), moved);
+        assert_eq!((app.project.pose_guide.x, app.project.pose_guide.y), moved);
     }
 
     #[test]
