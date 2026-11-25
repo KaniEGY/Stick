@@ -8422,6 +8422,7 @@ impl eframe::App for StickApp {
             for (idx, layer) in self.project.layers.iter_mut().enumerate() {
                 if !filter.is_empty() && !layer.name.to_lowercase().contains(&filter) { continue; }
                 let selected_row = self.active_layer_idx == idx;
+                let row_width = (ui.available_width() - 2.0).max(180.0);
                 egui::Frame::none()
                     .fill(if selected_row { egui::Color32::from_rgb(34, 65, 90) }
                         else { egui::Color32::from_rgb(37, 39, 46) })
@@ -8431,15 +8432,19 @@ impl eframe::App for StickApp {
                     .rounding(6.0)
                     .inner_margin(egui::Margin::symmetric(6.0, 7.0))
                     .show(ui, |ui| {
+                ui.set_min_width(row_width - 12.0);
+                ui.set_width(row_width - 12.0);
                 ui.horizontal(|ui| {
-                    let has_art = layer.keyframes.values().any(|frame|
+                    let has_art = layer.is_pose_rig || layer.keyframes.values().any(|frame|
                         !frame.strokes.is_empty() || !frame.text_items.is_empty() || !frame.media_items.is_empty());
                     // Live thumbnail based on the layer's stored drawing strokes.
                     let (thumb, _) = ui.allocate_exact_size(egui::vec2(48.0, 38.0), egui::Sense::hover());
                     ui.painter().rect_filled(thumb, 3.0, egui::Color32::from_gray(82));
                     let inner = thumb.shrink(3.0);
                     ui.painter().rect_filled(inner, 2.0, egui::Color32::from_gray(236));
-                    if let Some((_, data)) = layer.keyframes.iter()
+                    if layer.is_pose_rig {
+                        draw_pose_rig_icon(ui.painter(), inner.shrink(4.0), true);
+                    } else if let Some((_, data)) = layer.keyframes.iter()
                         .filter(|(f,_)| **f <= current_frame).max_by_key(|(f,_)| **f) {
                         for stroke in data.strokes.iter().take(70) {
                             let color = egui::Color32::from_rgb(stroke.color[0], stroke.color[1], stroke.color[2]);
@@ -8479,7 +8484,7 @@ impl eframe::App for StickApp {
                     let (lock_rect, lock_resp) = ui.allocate_exact_size(
                         egui::vec2(27.0,27.0),egui::Sense::click());
                     draw_layer_status_icon(ui.painter(),lock_rect,layer.locked,false);
-                    if lock_resp.on_hover_text(tr(lang, "Lock or unlock layer", "اقفل أو افتح قفل اللير")).clicked() {
+                    if !layer.is_pose_rig && lock_resp.on_hover_text(tr(lang, "Lock or unlock layer", "اقفل أو افتح قفل اللير")).clicked() {
                         dock_lock_toggle = Some(idx);
                     }
                     let effect_icon=egui::RichText::new("✦").color(
@@ -8490,17 +8495,32 @@ impl eframe::App for StickApp {
                         .on_hover_text(tr(lang,"Layer Effects","مؤثرات اللير")).clicked() {
                         layer_effect_window_request=Some(idx);
                     }
-                    let layer_response = ui.vertical(|ui| {
-                        let response = ui.selectable_label(selected_row,
-                            egui::RichText::new(&layer.name).strong().size(14.0));
-                        let stroke_count: usize = layer.keyframes.values().map(|f| f.strokes.len()).sum();
-                        ui.label(egui::RichText::new(format!("{} {} • {} {}{}",
-                            layer.keyframes.len(), tr(lang, "frames", "فريم"),
-                            stroke_count, tr(lang, "strokes", "خط"),
-                            if layer.is_guide { " • GUIDE" } else if layer.is_reference { " • REF" } else { "" }))
-                            .small().color(egui::Color32::from_gray(160)));
-                        response
-                    }).inner;
+                    if ui.add(egui::Button::new("⚙").frame(false))
+                        .on_hover_text(tr(lang,"Layer settings","إعدادات اللير")).clicked() {
+                        layer_settings_window_request=Some(idx);
+                    }
+                    let name_width=(ui.available_width()-28.0).max(64.0);
+                    let layer_response = ui.allocate_ui_with_layout(
+                        egui::vec2(name_width,36.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(name_width);
+                            let display_name=if layer.is_pose_rig {
+                                tr(lang,"Pose Rig","هيكل الوضعية")
+                            } else { layer.name.clone() };
+                            let response=ui.selectable_label(selected_row,
+                                egui::RichText::new(display_name).strong().size(14.0));
+                            let stroke_count: usize = layer.keyframes.values().map(|f| f.strokes.len()).sum();
+                            ui.label(egui::RichText::new(format!("{} {} • {} {}{}",
+                                layer.keyframes.len(), tr(lang, "frames", "فريم"),
+                                stroke_count, tr(lang, "strokes", "خط"),
+                                if layer.is_pose_rig { " • RIG" }
+                                else if layer.is_guide { " • GUIDE" }
+                                else if layer.is_reference { " • REF" } else { "" }))
+                                .small().color(egui::Color32::from_gray(160)));
+                            response
+                        },
+                    ).inner;
                     if layer_response.clicked() {
                         self.active_layer_idx = idx;
                         self.selected_stroke_indices.clear();
@@ -8508,44 +8528,77 @@ impl eframe::App for StickApp {
                         self.selected_audio_idx = None;
                         if self.right_panel_tab==2 {self.right_panel_tab=0;}
                     }
-                    if layer_response.double_clicked() { rename_layer_index = Some(idx); }
+                    if layer_response.double_clicked() && !layer.is_pose_rig { rename_layer_index = Some(idx); }
                     layer_response.context_menu(|ui| {
-                        ui.strong(&layer.name);
+                        ui.strong(if layer.is_pose_rig { tr(lang,"Pose Rig","هيكل الوضعية") } else { layer.name.clone() });
                         ui.separator();
-                        if ui.button(tr(lang, "Rename", "غيّر الاسم")).clicked() {
-                            rename_layer_index = Some(idx); ui.close_menu();
+                        if layer.is_pose_rig {
+                            let label=tr(lang,"Front / Back","أمام / خلف");
+                            if ui.button(label).on_hover_text(if self.project.pose_guide.in_front {
+                                tr(lang,"Currently in front of the artwork","الهيكل حاليًا أمام الرسومات")
+                            } else {tr(lang,"Currently behind the artwork","الهيكل حاليًا خلف الرسومات")}).clicked() {
+                                pose_depth_request=Some(!self.project.pose_guide.in_front);
+                                ui.close_menu();
+                            }
+                            if ui.button(tr(lang,"Hide pose rig","إخفاء الهيكل")).clicked() {
+                                dock_visibility_toggle=Some(idx);
+                                ui.close_menu();
+                            }
+                        } else {
+                            if ui.button(tr(lang, "Rename", "غيّر الاسم")).clicked() {
+                                rename_layer_index = Some(idx); ui.close_menu();
+                            }
+                            if ui.button(tr(lang, "Copy Layer", "انسخ اللير")).clicked() {
+                                copy_layer_index = Some(idx); ui.close_menu();
+                            }
+                            if ui.add_enabled(self.layer_clipboard.is_some(),
+                                egui::Button::new(tr(lang, "Paste Layer", "الصق اللير"))).clicked() {
+                                paste_layer_index = Some(idx); ui.close_menu();
+                            }
+                            if ui.button(tr(lang,
+                                if layer.is_guide { "Disable Guide Layer" } else { "Make Guide Layer (not exported)" },
+                                if layer.is_guide { "إلغاء وضع الإرشاد" } else { "لير إرشادي (مش بيتصدر)" })).clicked() {
+                                layer.is_guide = !layer.is_guide;
+                                self.has_unsaved_changes = true;
+                                ui.close_menu();
+                            }
+                            if ui.button(tr(lang,
+                                if layer.is_reference { "Disable Reference Layer" } else { "Set as Fill Reference" },
+                                if layer.is_reference { "إلغاء لير المرجع" } else { "استخدمه كمرجع للتعبئة" })).clicked() {
+                                layer.is_reference = !layer.is_reference;
+                                self.has_unsaved_changes = true;
+                                ui.close_menu();
+                            }
+                            if ui.button(tr(lang, "Duplicate", "دبلكيت اللير")).clicked() {
+                                layer_menu_action = Some((idx, layer_ops::LayerAction::Duplicate));
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(can_delete_layers && !layer.locked,
+                                egui::Button::new(tr(lang, "Delete Layer", "احذف اللير"))).clicked() {
+                                self.pending_delete_layer = Some(idx); ui.close_menu();
+                            }
                         }
-                        if ui.button(tr(lang, "Copy Layer", "انسخ اللير")).clicked() {
-                            copy_layer_index = Some(idx); ui.close_menu();
-                        }
-                        if ui.add_enabled(self.layer_clipboard.is_some(),
-                            egui::Button::new(tr(lang, "Paste Layer", "الصق اللير"))).clicked() {
-                            paste_layer_index = Some(idx); ui.close_menu();
-                        }
-                        if ui.button(tr(lang,
-                            if layer.is_guide { "Disable Guide Layer" } else { "Make Guide Layer (not exported)" },
-                            if layer.is_guide { "إلغاء وضع الإرشاد" } else { "لير إرشادي (مش بيتصدر)" })).clicked() {
-                            layer.is_guide = !layer.is_guide;
-                            self.has_unsaved_changes = true;
-                            ui.close_menu();
-                        }
-                        if ui.button(tr(lang,
-                            if layer.is_reference { "Disable Reference Layer" } else { "Set as Fill Reference" },
-                            if layer.is_reference { "إلغاء لير المرجع" } else { "استخدمه كمرجع للتعبئة" })).clicked() {
-                            layer.is_reference = !layer.is_reference;
-                            self.has_unsaved_changes = true;
-                            ui.close_menu();
-                        }
-                        if ui.button(tr(lang, "Duplicate", "دبلكيت اللير")).clicked() {
-                            layer_menu_action = Some((idx, layer_ops::LayerAction::Duplicate));
-                            ui.close_menu();
-                        }
-                        if ui.add_enabled(can_delete_layers && !layer.locked,
-                            egui::Button::new(tr(lang, "Delete Layer", "احذف اللير"))).clicked() {
-                            self.pending_delete_layer = Some(idx); ui.close_menu();
-                        }
+                        ui.separator();
+                        ui.menu_button(tr(lang,"Canvas background","خلفية الكانفا"),|ui|{
+                            if ui.checkbox(&mut self.project.background_transparent,
+                                tr(lang,"Transparent (checkerboard)","شفاف (مربعات بيضاء ورمادية)")).changed() {
+                                background_settings_changed=true;
+                            }
+                            ui.horizontal(|ui|{
+                                ui.label(tr(lang,"Background color","لون الخلفية"));
+                                if ui.color_edit_button_srgba_unmultiplied(&mut self.project.background_color).changed() {
+                                    background_settings_changed=true;
+                                }
+                            });
+                            if ui.button(tr(lang,"Reset to white","إرجاع للأبيض")).clicked() {
+                                self.project.background_color=[255,255,255,255];
+                                self.project.background_transparent=false;
+                                background_settings_changed=true;
+                                ui.close_menu();
+                            }
+                        });
                     });
-                    if ui.add_enabled(can_delete_layers && !layer.locked,
+                    if ui.add_enabled(can_delete_layers && !layer.locked && !layer.is_pose_rig,
                         egui::Button::new("×"))
                         .on_hover_text(tr(lang, "Delete Layer", "احذف اللير")).clicked() {
                         self.pending_delete_layer = Some(idx);
@@ -8554,6 +8607,7 @@ impl eframe::App for StickApp {
                 });
                 ui.add_space(2.0);
             }
+            if background_settings_changed { self.has_unsaved_changes=true; }
                 // Current room roster lives under Layers in the right dock.
                 if self.online_session.is_some() {
                     ui.add_space(12.0);
@@ -8592,6 +8646,12 @@ impl eframe::App for StickApp {
         }
         if let Some(idx)=layer_effect_window_request {
             self.layer_effect_window=Some(idx);
+        }
+        if let Some(idx)=layer_settings_window_request {
+            self.layer_settings_window=Some(idx);
+        }
+        if let Some(in_front)=pose_depth_request {
+            self.set_pose_rig_depth(in_front);
         }
         if let Some(idx)=self.layer_effect_window {
             if let Some(layer)=self.project.layers.get(idx) {
