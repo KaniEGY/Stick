@@ -818,6 +818,22 @@ fn update_canvas_primary_capture(
         current
     }
 }
+
+fn drag_pose_joint_if_allowed(
+    guide: &mut pose_guide::PoseGuide,
+    rig_can_move: bool,
+    edit_mode: bool,
+    joint: pose_guide::PoseJoint,
+    canvas_size: (f32, f32),
+    stage_pos: egui::Pos2,
+) -> bool {
+    if !rig_can_move || !edit_mode || !guide.visible {
+        return false;
+    }
+    pose_guide::drag_joint(guide, joint, canvas_size, stage_pos);
+    true
+}
+
 // Public Desktop OAuth identifier for the Stick Studio Google Cloud project.
 // Not a client secret. A valid build-time override is still supported.
 const OFFICIAL_GOOGLE_CLIENT_ID: &str =
@@ -3457,6 +3473,7 @@ impl StickApp {
 
         if self.show_assets_library {
             let mut open=true;
+            let mut rig_changed=false;
             egui::Window::new(tr(lang,"Pose Rig Settings","إعدادات الهيكل"))
                 .open(&mut open).resizable(true).vscroll(true).default_width(470.0).show(ctx,|ui|{
                         ui.strong(tr(lang,"Body / Pose Reference","مرجع الجسم والوضعية"));
@@ -3475,6 +3492,7 @@ impl StickApp {
                                     self.project.pose_guide.locked=locked;
                                     self.pose_edit_mode=false;
                                     self.pose_drag_joint=None;
+                                    rig_changed=true;
                                 }
                             }
                             self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
@@ -3488,27 +3506,30 @@ impl StickApp {
                         });
                         let locked = self.pose_rig_locked();
                         if locked { ui.label(tr(lang,"Unlock the rig layer to move or edit the pose.","افتح قفل طبقة الهيكل لتعديل الوضعية.")); }
-                        ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
-                            .text(tr(lang,"Opacity","الشفافية")));
+                        rig_changed |= ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
+                            .text(tr(lang,"Opacity","الشفافية"))).changed();
                         ui.horizontal(|ui|{
                             ui.label(tr(lang,"Rig color","لون الهيكل"));
-                            if ui.color_edit_button_srgba_unmultiplied(
-                                &mut self.project.pose_guide.color).changed() {
-                                self.has_unsaved_changes=true;
-                            }
+                            rig_changed |= ui.color_edit_button_srgba_unmultiplied(
+                                &mut self.project.pose_guide.color).changed();
                         });
                         ui.add_enabled_ui(!locked, |ui| {
-                        ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
-                            .text(tr(lang,"Overall size","الحجم العام")));
+                        rig_changed |= ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
+                            .text(tr(lang,"Overall size","الحجم العام"))).changed();
                         if ui.add(egui::Slider::new(&mut self.project.pose_guide.head_scale,0.45..=2.0)
                             .text(tr(lang,"Head size","حجم الرأس"))).changed()
-                        {self.project.pose_guide.mark_custom();}
+                        {
+                            self.project.pose_guide.mark_custom();
+                            rig_changed=true;
+                        }
                         ui.horizontal(|ui|{
                             ui.label(tr(lang,"Position","المكان"));
-                            ui.add(egui::DragValue::new(&mut self.project.pose_guide.x).range(0.0..=1.0)
-                                .speed(0.01).prefix("X "));
-                            ui.add(egui::DragValue::new(&mut self.project.pose_guide.y).range(0.0..=1.0)
-                                .speed(0.01).prefix("Y "));
+                            let mut position_changed=false;
+                            position_changed |= ui.add(egui::DragValue::new(&mut self.project.pose_guide.x).range(0.0..=1.0)
+                                .speed(0.01).prefix("X ")).changed();
+                            position_changed |= ui.add(egui::DragValue::new(&mut self.project.pose_guide.y).range(0.0..=1.0)
+                                .speed(0.01).prefix("Y ")).changed();
+                            rig_changed |= position_changed;
                         });
 
                         ui.separator();
@@ -3521,7 +3542,7 @@ impl StickApp {
                                 (RigShape::Box,"Box","مكعب"),
                                 (RigShape::Rectangle,"Rectangle","مستطيل"),
                             ] {
-                                ui.selectable_value(&mut self.project.pose_guide.shape,shape,tr(lang,en,ar));
+                                rig_changed |= ui.selectable_value(&mut self.project.pose_guide.shape,shape,tr(lang,en,ar)).changed();
                             }
                         });
                         ui.strong(tr(lang,"Body Shapes","أشكال الجسم"));
@@ -3535,8 +3556,15 @@ impl StickApp {
                             }
                         });
                         if let Some(preset)=chosen {
+                            let was_visible=self.project.pose_guide.visible;
                             self.project.pose_guide.apply_body_preset(preset);
                             self.project.pose_guide.visible=true;
+                            if !was_visible {
+                                self.pose_edit_mode=!self.pose_rig_locked();
+                                self.pose_drag_joint=None;
+                                self.sync_pose_rig_layer();
+                            }
+                            rig_changed=true;
                         }
 
                         ui.separator();
@@ -3563,9 +3591,13 @@ impl StickApp {
                         body_changed|=ui.add(egui::Slider::new(
                             &mut self.project.pose_guide.shin_length,0.55..=1.70)
                             .text(tr(lang,"Shin length","طول الساق"))).changed();
-                        if body_changed {self.project.pose_guide.mark_custom();}
+                        if body_changed {
+                            self.project.pose_guide.mark_custom();
+                            rig_changed=true;
+                        }
 
                         ui.collapsing(tr(lang,"Pose angles","زوايا الوضعية"),|ui|{
+                            let mut angles_changed=false;
                             for (label,value) in [
                                 (tr(lang,"Torso","الجذع"),&mut self.project.pose_guide.torso_tilt_deg),
                                 (tr(lang,"Left upper arm","الذراع الشمال"),&mut self.project.pose_guide.left_arm_deg),
@@ -3577,21 +3609,30 @@ impl StickApp {
                                 (tr(lang,"Left shin","الساق الشمال"),&mut self.project.pose_guide.left_shin_deg),
                                 (tr(lang,"Right shin","الساق اليمين"),&mut self.project.pose_guide.right_shin_deg),
                             ] {
-                                ui.add(egui::Slider::new(value,-180.0..=180.0).text(label));
+                                angles_changed |= ui.add(egui::Slider::new(value,-180.0..=180.0).text(label)).changed();
                             }
+                            rig_changed |= angles_changed;
                         });
 
                         ui.horizontal_wrapped(|ui|{
                             if ui.button(tr(lang,"Reset pose","إعادة الوضعية")).clicked(){
+                                let was_visible=self.project.pose_guide.visible;
                                 self.project.pose_guide.reset_pose_angles();
                                 self.project.pose_guide.visible=true;
+                                if !was_visible {
+                                    self.pose_edit_mode=!self.pose_rig_locked();
+                                    self.sync_pose_rig_layer();
+                                }
                                 self.pose_drag_joint=None;
+                                rig_changed=true;
                             }
                             if ui.button(tr(lang,"Classic body","الجسم الكلاسيكي")).clicked(){
                                 self.project.pose_guide.apply_body_preset(pose_guide::BodyPreset::Classic);
+                                rig_changed=true;
                             }
                             if ui.button(tr(lang,"Center","توسيط")).clicked(){
                                 self.project.pose_guide.x=0.5;self.project.pose_guide.y=0.55;
+                                rig_changed=true;
                             }
                         });
                         });
@@ -3599,6 +3640,7 @@ impl StickApp {
                             "The guide is editor-only and never appears in export.",
                             "المرجع للمساعدة في الرسم فقط ومش بيظهر في التصدير."));
                 });
+            if rig_changed { self.has_unsaved_changes=true; }
             self.show_assets_library=open;
         }
 
@@ -10582,15 +10624,22 @@ impl eframe::App for StickApp {
                 && self.canvas_quick_menu.is_none() {
                 if pointer_pressed {
                     if let Some(pos)=press_origin.filter(|_| press_started_on_canvas) {
-                        self.pose_drag_joint=pose_guide::hit_test_joint(
+                        let joint=pose_guide::hit_test_joint(
                             &self.project.pose_guide,(stage_w,stage_h),to_stage(pos),
                             (15.0/scale.max(0.05)).max(2.0));
+                        if joint.is_some() { self.save_undo_state(); }
+                        self.pose_drag_joint=joint;
                     }
                 }
                 if pointer_down {
                     if let (Some(joint),Some(pos))=(self.pose_drag_joint,pointer_pos) {
-                        pose_guide::drag_joint(&mut self.project.pose_guide,joint,(stage_w,stage_h),to_stage(pos));
-                        ctx.request_repaint();
+                        if drag_pose_joint_if_allowed(
+                            &mut self.project.pose_guide,rig_can_move,self.pose_edit_mode,
+                            joint,(stage_w,stage_h),to_stage(pos),
+                        ) {
+                            self.has_unsaved_changes=true;
+                            ctx.request_repaint();
+                        }
                     }
                 }
             }
@@ -11945,6 +11994,29 @@ mod tool_discovery_tests {
         let min=(60.0_f32/100.0).clamp(0.60,1.80);
         let max=(180.0_f32/100.0).clamp(0.60,1.80);
         assert_eq!((min,max),(0.60,1.80));
+    }
+
+    #[test]
+    fn locked_or_hidden_pose_rig_rejects_joint_drag() {
+        let mut guide=pose_guide::PoseGuide::default();
+        guide.visible=true;
+        let original=guide.clone();
+        let joint=pose_guide::PoseJoint::Root;
+        let canvas=(400.0,400.0);
+        let target=egui::pos2(120.0,260.0);
+
+        assert!(!drag_pose_joint_if_allowed(&mut guide,false,true,joint,canvas,target));
+        assert_eq!(guide,original);
+        assert!(!drag_pose_joint_if_allowed(&mut guide,true,false,joint,canvas,target));
+        assert_eq!(guide,original);
+
+        assert!(drag_pose_joint_if_allowed(&mut guide,true,true,joint,canvas,target));
+        assert_ne!((guide.x,guide.y),(original.x,original.y));
+
+        guide.visible=false;
+        let hidden=guide.clone();
+        assert!(!drag_pose_joint_if_allowed(&mut guide,true,true,joint,canvas,target));
+        assert_eq!(guide,hidden);
     }
 
     #[test]
