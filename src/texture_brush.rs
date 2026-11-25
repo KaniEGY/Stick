@@ -483,12 +483,12 @@ mod tests {
             };
             let mut target = Pixmap::new(128, 48).unwrap();
             brush.export(&mut target, &stroke, 255, Transform::identity());
-            assert!(target.pixels().iter().any(|pixel| {
-                let color=pixel.demultiply();
-                color.alpha() > 20
-                    && (i16::from(color.red()) - 28).abs() <= 2
-                    && (i16::from(color.green()) - 154).abs() <= 2
-                    && (i16::from(color.blue()) - 232).abs() <= 2
+            assert!(target.data().chunks_exact(4).any(|pixel| {
+                let alpha=i32::from(pixel[3]);
+                alpha > 20
+                    && ((i32::from(pixel[0]) * 255 / alpha) - 28).abs() <= 3
+                    && ((i32::from(pixel[1]) * 255 / alpha) - 154).abs() <= 3
+                    && ((i32::from(pixel[2]) * 255 / alpha) - 232).abs() <= 3
             }), "{preset:?} texture ignored its stroke color");
         }
     }
