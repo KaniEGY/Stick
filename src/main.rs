@@ -11856,10 +11856,23 @@ mod tool_discovery_tests {
     }
 
     #[test]
-    fn rig_toggle_preserves_pose_and_releases_the_drawing_tools() {
+    fn rig_toggle_manages_an_editor_only_layer_and_preserves_pose() {
         let mut app = StickApp::new(&egui::Context::default());
+        let artwork_layer_count=app.project.layers.len();
         app.toggle_pose_rig();
         assert!(app.project.pose_guide.visible && app.pose_edit_mode);
+        assert_eq!(app.project.layers.len(),artwork_layer_count+1);
+        assert!(app.project.layers[0].is_pose_rig
+            && app.project.layers[0].is_guide && app.project.layers[0].locked);
+        assert_eq!(app.active_layer_idx,1);
+
+        app.set_pose_rig_depth(false);
+        assert!(app.project.layers.last().unwrap().is_pose_rig);
+        assert_eq!(app.active_layer_idx,0);
+        app.set_pose_rig_depth(true);
+        assert!(app.project.layers[0].is_pose_rig);
+        assert_eq!(app.active_layer_idx,1);
+
         app.pose_drag_joint = Some(pose_guide::PoseJoint::Root);
         pose_guide::drag_joint(&mut app.project.pose_guide, pose_guide::PoseJoint::Root,
             (400.0, 400.0), egui::pos2(140.0, 240.0));
@@ -11867,8 +11880,11 @@ mod tool_discovery_tests {
         assert_ne!(moved, (0.5, 0.55));
         app.toggle_pose_rig();
         assert!(!app.project.pose_guide.visible && !app.pose_edit_mode && app.pose_drag_joint.is_none());
+        assert_eq!(app.project.layers.len(),artwork_layer_count);
+        assert!(!app.project.layers.iter().any(|layer|layer.is_pose_rig));
         app.toggle_pose_rig();
         assert_eq!((app.project.pose_guide.x, app.project.pose_guide.y), moved);
+        assert!(app.project.layers.iter().any(|layer|layer.is_pose_rig));
     }
 
     #[test]
