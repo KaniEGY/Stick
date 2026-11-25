@@ -454,7 +454,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn colored_brush_masks_are_tinted_by_the_selected_color() {
         for (brush, preset) in [
             (TextureBrush::Watercolor, KritaBrushPreset::Watercolor),
