@@ -3465,11 +3465,7 @@ impl StickApp {
                         ui.horizontal_wrapped(|ui|{
                             self.pose_visibility_checkbox(ui, tr(lang,"Visible","ظاهر"));
                             self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
-                            let depth_label=if self.project.pose_guide.in_front {
-                                tr(lang,"Front","أمام")
-                            } else {
-                                tr(lang,"Back","خلف")
-                            };
+                            let depth_label=tr(lang,"Front / Back","أمام / خلف");
                             if ui.button(depth_label).on_hover_text(tr(lang,
                                 "Front: the rig stays over your drawing. Back: your drawing appears over the rig.",
                                 "أمام: الهيكل فوق الرسم. خلف: الرسم بيظهر فوق الهيكل."
@@ -3484,6 +3480,13 @@ impl StickApp {
                         {self.project.pose_guide.mark_custom();}
                         ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
                             .text(tr(lang,"Opacity","الشفافية")));
+                        ui.horizontal(|ui|{
+                            ui.label(tr(lang,"Rig color","لون الهيكل"));
+                            if ui.color_edit_button_srgba_unmultiplied(
+                                &mut self.project.pose_guide.color).changed() {
+                                self.has_unsaved_changes=true;
+                            }
+                        });
                         ui.horizontal(|ui|{
                             ui.label(tr(lang,"Position","المكان"));
                             ui.add(egui::DragValue::new(&mut self.project.pose_guide.x).range(0.0..=1.0)
@@ -3577,11 +3580,7 @@ impl StickApp {
                     ui.horizontal_wrapped(|ui|{
                         self.pose_visibility_checkbox(ui, tr(lang,"Visible","ظاهر"));
                         self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
-                        let depth_label=if self.project.pose_guide.in_front {
-                            tr(lang,"Front","أمام")
-                        } else {
-                            tr(lang,"Back","خلف")
-                        };
+                        let depth_label=tr(lang,"Front / Back","أمام / خلف");
                         if ui.button(depth_label).clicked() {
                             self.set_pose_rig_depth(!self.project.pose_guide.in_front);
                         }
@@ -7954,11 +7953,7 @@ impl eframe::App for StickApp {
                         ui.horizontal_wrapped(|ui|{
                             self.pose_visibility_checkbox(ui, tr(lang,"Visible","ظاهر"));
                             self.pose_edit_checkbox(ui, tr(lang,"Move joints","تحريك المفاصل"));
-                            let depth_label=if self.project.pose_guide.in_front {
-                                tr(lang,"Front","أمام")
-                            } else {
-                                tr(lang,"Back","خلف")
-                            };
+                            let depth_label=tr(lang,"Front / Back","أمام / خلف");
                             if ui.button(depth_label).on_hover_text(tr(lang,
                                 "Front: rig over drawing. Back: drawing over rig.",
                                 "أمام: الهيكل فوق الرسم. خلف: الرسم فوق الهيكل."
@@ -7972,6 +7967,13 @@ impl eframe::App for StickApp {
                             .text(tr(lang,"Head scale","حجم الرأس")));
                         ui.add(egui::Slider::new(&mut self.project.pose_guide.opacity,0.05..=1.0)
                             .text(tr(lang,"Opacity","الشفافية")));
+                        ui.horizontal(|ui|{
+                            ui.label(tr(lang,"Rig color","لون الهيكل"));
+                            if ui.color_edit_button_srgba_unmultiplied(
+                                &mut self.project.pose_guide.color).changed() {
+                                self.has_unsaved_changes=true;
+                            }
+                        });
                         if ui.button(tr(lang,"Reset pose","إعادة الوضعية")).clicked(){
                             self.project.pose_guide=pose_guide::PoseGuide::default();
                             self.project.pose_guide.visible=true;
@@ -8385,6 +8387,8 @@ impl eframe::App for StickApp {
                 .desired_width(f32::INFINITY));
             egui::ScrollArea::vertical().id_salt("layer_dock_scroll")
                 .auto_shrink([false, false]).show(ui, |ui| {
+            let selected_is_pose_rig=self.project.layers.get(self.active_layer_idx)
+                .is_some_and(|layer|layer.is_pose_rig);
             ui.horizontal(|ui| {
                 if ui.small_button(tr(lang, "+ New Layer", "+ لير جديد")).clicked() {
                     self.save_undo_state();
@@ -8394,20 +8398,21 @@ impl eframe::App for StickApp {
                     self.active_layer_idx = 0;
                     self.has_unsaved_changes = true;
                 }
-                if ui.small_button(tr(lang, "Duplicate", "نسخ اللير"))
+                if ui.add_enabled(!selected_is_pose_rig,
+                    egui::Button::new(tr(lang, "Duplicate", "نسخ اللير")))
                     .on_hover_text(tr(lang, "Duplicate selected layer", "اعمل نسخة من اللير")).clicked() {
                     layer_menu_action = Some((self.active_layer_idx, layer_ops::LayerAction::Duplicate));
                 }
-                if ui.add_enabled(self.active_layer_idx > 0, egui::Button::new("↑"))
+                if ui.add_enabled(self.active_layer_idx > 0 && !selected_is_pose_rig, egui::Button::new("↑"))
                     .on_hover_text(tr(lang, "Move Layer Up", "حرّك اللير لفوق")).clicked() {
                     layer_menu_action = Some((self.active_layer_idx, layer_ops::LayerAction::MoveUp));
                 }
-                if ui.add_enabled(self.active_layer_idx + 1 < self.project.layers.len(), egui::Button::new("↓"))
+                if ui.add_enabled(self.active_layer_idx + 1 < self.project.layers.len() && !selected_is_pose_rig, egui::Button::new("↓"))
                     .on_hover_text(tr(lang, "Move Layer Down", "حرّك اللير لتحت")).clicked() {
                     layer_menu_action = Some((self.active_layer_idx, layer_ops::LayerAction::MoveDown));
                 }
             });
-            if let Some(al) = self.project.layers.get_mut(self.active_layer_idx) {
+            if let Some(al) = self.project.layers.get_mut(self.active_layer_idx).filter(|layer|!layer.is_pose_rig) {
                 ui.horizontal(|ui| {
                     ui.label(tr(lang, "Layer Opacity", "شفافية اللير"));
                     if ui.add(egui::Slider::new(&mut al.opacity, 0.0..=1.0)).changed() {
@@ -8521,7 +8526,7 @@ impl eframe::App for StickApp {
                             response
                         },
                     ).inner;
-                    if layer_response.clicked() {
+                    if layer_response.clicked() && !layer.is_pose_rig {
                         self.active_layer_idx = idx;
                         self.selected_stroke_indices.clear();
                         self.selected_media_idx = None;
