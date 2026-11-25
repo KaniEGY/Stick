@@ -2408,6 +2408,8 @@ impl StickApp {
                         }
                     }
                     self.project = project;
+                    self.layer_settings_window = None;
+                    self.layer_effect_window = None;
                     if let Some(session) = &self.online_session { session.set_baseline(&self.project); }
                     self.refresh_online_timeline();
                     self.undo_stack.clear();
@@ -4623,7 +4625,9 @@ impl StickApp {
         self.editing_symbol_name = None;
         self.pending_delete_layer = None;
         self.layer_rename_index = None;
-        self.texture_cache.clear();
+        self.layer_settings_window = None;
+        self.layer_effect_window = None;
+        self.texture_cache.clear;
         self.layer_preview_cache.clear();
         self.current_project_path = None;
         self.project = project;
