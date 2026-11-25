@@ -1621,6 +1621,55 @@ fn draw_gear_icon(painter: &egui::Painter, rect: egui::Rect, scale: f32) {
     }
 }
 
+fn draw_transparency_checkerboard<F, G>(
+    painter: &egui::Painter,
+    view: egui::Rect,
+    stage_w: f32,
+    stage_h: f32,
+    scale: f32,
+    to_screen: &F,
+    to_stage: &G,
+) where
+    F: Fn(egui::Pos2) -> egui::Pos2,
+    G: Fn(egui::Pos2) -> egui::Pos2,
+{
+    let corners = [
+        view.left_top(), view.right_top(), view.right_bottom(), view.left_bottom(),
+    ].map(to_stage);
+    let min_x = corners.iter().map(|p| p.x).fold(f32::INFINITY, f32::min).clamp(0.0, stage_w);
+    let max_x = corners.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max).clamp(0.0, stage_w);
+    let min_y = corners.iter().map(|p| p.y).fold(f32::INFINITY, f32::min).clamp(0.0, stage_h);
+    let max_y = corners.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max).clamp(0.0, stage_h);
+    if min_x >= max_x || min_y >= max_y { return; }
+
+    // Keep checker squares close to 18 screen points at every zoom level.
+    let cell = (18.0 / scale.max(0.1)).clamp(4.0, 160.0);
+    let start_x = (min_x / cell).floor() as u32;
+    let end_x = (max_x / cell).ceil() as u32;
+    let start_y = (min_y / cell).floor() as u32;
+    let end_y = (max_y / cell).ceil() as u32;
+    let clipped = painter.with_clip_rect(view);
+    for y in start_y..end_y {
+        for x in start_x..end_x {
+            let x0 = x as f32 * cell;
+            let y0 = y as f32 * cell;
+            let x1 = (x0 + cell).min(stage_w);
+            let y1 = (y0 + cell).min(stage_h);
+            let shade = if (x + y) % 2 == 0 { 238 } else { 204 };
+            clipped.add(egui::Shape::convex_polygon(
+                vec![
+                    to_screen(egui::pos2(x0, y0)),
+                    to_screen(egui::pos2(x1, y0)),
+                    to_screen(egui::pos2(x1, y1)),
+                    to_screen(egui::pos2(x0, y1)),
+                ],
+                egui::Color32::from_gray(shade),
+                egui::Stroke::NONE,
+            ));
+        }
+    }
+}
+
 fn draw_artist_system_icon(painter: &egui::Painter, rect: egui::Rect) {
     let c = rect.center();
     let cyan = egui::Color32::from_rgb(67, 220, 255);
@@ -3425,7 +3474,7 @@ impl StickApp {
                                 "Front: the rig stays over your drawing. Back: your drawing appears over the rig.",
                                 "أمام: الهيكل فوق الرسم. خلف: الرسم بيظهر فوق الهيكل."
                             )).clicked() {
-                                self.project.pose_guide.in_front=!self.project.pose_guide.in_front;
+                                self.set_pose_rig_depth(!self.project.pose_guide.in_front);
                             }
                         });
                         ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
@@ -3534,7 +3583,7 @@ impl StickApp {
                             tr(lang,"Back","خلف")
                         };
                         if ui.button(depth_label).clicked() {
-                            self.project.pose_guide.in_front=!self.project.pose_guide.in_front;
+                            self.set_pose_rig_depth(!self.project.pose_guide.in_front);
                         }
                     });
                     ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
@@ -7914,7 +7963,7 @@ impl eframe::App for StickApp {
                                 "Front: rig over drawing. Back: drawing over rig.",
                                 "أمام: الهيكل فوق الرسم. خلف: الرسم فوق الهيكل."
                             )).clicked() {
-                                self.project.pose_guide.in_front=!self.project.pose_guide.in_front;
+                                self.set_pose_rig_depth(!self.project.pose_guide.in_front);
                             }
                         });
                         ui.add(egui::Slider::new(&mut self.project.pose_guide.scale,0.25..=3.0)
@@ -10103,7 +10152,7 @@ impl eframe::App for StickApp {
                 self.zoom_level = new_zoom;
             }
             if (space_down || self.active_tool_ui == ActiveToolUI::HandCanvas)
-                && pointer_down && is_over_canvas && !any_modal_open && !self.pose_edit_mode {
+                && pointer_down && is_over_canvas && !any_modal_open && self.pose_drag_joint.is_none() {
                 if let (Some(c), Some(l)) = (pointer_pos, self.last_pointer_pos) { self.pan_offset += c - l; }
             }
             // With the hand tool, left drag pans; right drag rotates the entire stage view.
@@ -10140,14 +10189,20 @@ impl eframe::App for StickApp {
                 &to_screen,&self.config.canvas_appearance);
             // Rotate the paper along with the artwork, rather than rotating
             // only the strokes over an unrotated white rectangle.
-            painter.add(egui::Shape::convex_polygon(
-                vec![to_screen(egui::pos2(0.0, 0.0)),
-                     to_screen(egui::pos2(stage_w, 0.0)),
-                     to_screen(egui::pos2(stage_w, stage_h)),
-                     to_screen(egui::pos2(0.0, stage_h))],
-                egui::Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]),
-                egui::Stroke::NONE,
-            ));
+            if self.project.background_transparent {
+                draw_transparency_checkerboard(
+                    &painter, canvas_rect, stage_w, stage_h, scale, &to_screen, &to_stage,
+                );
+            } else {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![to_screen(egui::pos2(0.0, 0.0)),
+                         to_screen(egui::pos2(stage_w, 0.0)),
+                         to_screen(egui::pos2(stage_w, stage_h)),
+                         to_screen(egui::pos2(0.0, stage_h))],
+                    egui::Color32::from_rgb(bg[0], bg[1], bg[2]),
+                    egui::Stroke::NONE,
+                ));
+            }
             if self.config.symmetry_axis_guide {
                 let guide = egui::Stroke::new(
                     3.0,
@@ -10343,7 +10398,7 @@ impl eframe::App for StickApp {
                     &i.events, continued_contact || self.current_stroke.is_some(), pointer_down, pointer_pos));
                 let enabled = freehand && can_use_tool && !any_modal_open && !space_down
                     && !size_gesture_down && !opacity_gesture && self.canvas_quick_menu.is_none()
-                    && !self.pose_edit_mode;
+                    && self.pose_drag_joint.is_none();
                 let vector = self.active_tool_ui == ActiveToolUI::VectorPen;
                 let strength = if vector { self.vector_stabilizer_strength } else { self.stabilizer_strength };
                 let stabilization = (if pressure_available { strength } else { strength * 0.45 })
@@ -10376,7 +10431,7 @@ impl eframe::App for StickApp {
             }
             if !space_down && !size_gesture_down && !opacity_gesture
                 && self.canvas_quick_menu.is_none()
-                && !self.pose_edit_mode
+                && self.pose_drag_joint.is_none()
                 && self.active_tool_ui != ActiveToolUI::HandCanvas
                 && self.canvas_primary_capture
                 && is_over_canvas && !any_modal_open && can_use_tool {
@@ -11000,11 +11055,6 @@ impl eframe::App for StickApp {
                 }
             }
 
-            if self.project.pose_guide.visible && !self.project.pose_guide.in_front {
-                pose_guide::draw_active(&paper_painter,&self.project.pose_guide,(stage_w,stage_h),&to_screen,
-                    if self.pose_edit_mode {self.pose_drag_joint}else{None});
-            }
-
             let mut canvas_media_select: Option<(usize,usize)> = None;
             let mut canvas_media_action: Option<(usize,usize,bool)> = None; // true=duplicate
             // Bound cached layer textures to 64 MiB and avoid rasterizing
@@ -11014,6 +11064,14 @@ impl eframe::App for StickApp {
             let preview_slots = ((64 * 1024 * 1024u64) / preview_bytes.max(1)).min(8) as usize;
             let mut used_layer_previews = Vec::new();
             for (layer_index,layer) in self.project.layers.iter().enumerate().rev() {
+                if layer.is_pose_rig {
+                    if layer.visible && self.project.pose_guide.visible {
+                        pose_guide::draw_active(&paper_painter,&self.project.pose_guide,
+                            (stage_w,stage_h),&to_screen,
+                            if self.pose_edit_mode {self.pose_drag_joint}else{None});
+                    }
+                    continue;
+                }
                 if layer.visible {
                     let l_op = layer.opacity.clamp(0.0, 1.0);
                     if l_op == 0.0 { continue; }
@@ -11317,11 +11375,6 @@ impl eframe::App for StickApp {
                     draw_stroke_pro(&painter, &preview, None, 1.0, scale, 0.0, 0.0, &to_screen);
                 }
             }
-            if self.project.pose_guide.visible && self.project.pose_guide.in_front {
-                pose_guide::draw_active(&paper_painter,&self.project.pose_guide,(stage_w,stage_h),&to_screen,
-                    if self.pose_edit_mode {self.pose_drag_joint}else{None});
-            }
-
             // Display chrome only, intentionally excluded from all exports.
             canvas_appearance::draw_chrome(&painter,stage_w,stage_h,scale,
                 &to_screen,&self.config.canvas_appearance);
