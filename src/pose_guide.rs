@@ -63,6 +63,8 @@ pub struct PoseGuide {
     pub y:f32,
     pub scale:f32,
     pub opacity:f32,
+    #[serde(default = "default_rig_color")]
+    pub color:[u8;4],
     pub head_scale:f32,
     pub head_offset_x:f32,
     pub head_offset_y:f32,
@@ -90,9 +92,12 @@ pub struct PoseGuide {
     pub left_shin_deg:f32,
     pub right_shin_deg:f32,
 }
+fn default_rig_color()->[u8;4]{[70,190,255,255]}
+
 impl Default for PoseGuide{
     fn default()->Self{Self{
         visible:false,in_front:true,x:0.5,y:0.55,scale:1.0,opacity:0.45,
+        color:default_rig_color(),
         head_scale:1.0,head_offset_x:0.0,head_offset_y:0.0,
         body_preset:BodyPreset::Classic,
         torso_length:1.0,shoulder_width:1.0,hip_width:1.0,
@@ -265,8 +270,9 @@ pub fn draw_active(
 ){
     if !guide.visible{return}
     let g=layout(guide,canvas);
-    let alpha=(guide.opacity.clamp(0.05,1.0)*255.0) as u8;
-    let color=egui::Color32::from_rgba_unmultiplied(70,190,255,alpha);
+    let alpha=(guide.opacity.clamp(0.05,1.0)*guide.color[3] as f32).round() as u8;
+    let color=egui::Color32::from_rgba_unmultiplied(
+        guide.color[0],guide.color[1],guide.color[2],alpha);
     let active_color=egui::Color32::from_rgba_unmultiplied(255,201,64,alpha.max(150));
     let stroke=egui::Stroke::new(2.0,color);
     let line=|a:egui::Pos2,b:egui::Pos2|painter.line_segment([to_screen(a),to_screen(b)],stroke);
