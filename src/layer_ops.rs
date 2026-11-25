@@ -29,6 +29,9 @@ pub fn apply_layer_action(
     if index >= project.layers.len() {
         return Err("The selected layer no longer exists.");
     }
+    if project.layers[index].is_pose_rig {
+        return Err("The pose rig layer is managed by the rig controls.");
+    }
     match action {
         LayerAction::Delete => {
             if project.layers.len() <= 1 {
