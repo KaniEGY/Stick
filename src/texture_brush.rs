@@ -327,13 +327,19 @@ impl TextureBrush {
         to_screen: impl Fn(f32, f32) -> egui::Pos2,
     ) {
         let ctx = painter.ctx();
-        let key = egui::Id::new(("stick_brush_mask", self as u8, stroke.tip_shape as u8));
+        // Bake the selected RGB into the cached alpha-mask texture itself.
+        // This avoids relying on vertex tinting for textured brushes and keeps
+        // watercolor, spray and graphite hues identical in preview and export.
+        let key = egui::Id::new((
+            "stick_brush_mask", self as u8, stroke.tip_shape as u8,
+            rgba[0], rgba[1], rgba[2],
+        ));
         let cached = ctx.data(|data| data.get_temp::<egui::TextureHandle>(key));
         let texture = cached.unwrap_or_else(|| {
             let pixels = self
                 .mask(stroke.tip_shape)
                 .iter()
-                .map(|&a| egui::Color32::from_rgba_unmultiplied(255, 255, 255, a))
+                .map(|&a| egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], a))
                 .collect();
             let texture = ctx.load_texture(
                 "brush tip",
@@ -349,10 +355,9 @@ impl TextureBrush {
         let mut mesh = egui::Mesh::with_texture(texture.id());
         self.stamps(stroke, |stamp| {
             let start = mesh.vertices.len() as u32;
-            let color = egui::Color32::from_rgba_unmultiplied(
-                rgba[0],
-                rgba[1],
-                rgba[2],
+            // The texture already contains the hue; vertex color only scales
+            // the flow/opacity for this stamp.
+            let color = egui::Color32::from_white_alpha(
                 (rgba[3] as f32 * stamp.flow).round() as u8,
             );
             for (u, v) in [(0., 0.), (1., 0.), (1., 1.), (0., 1.)] {
