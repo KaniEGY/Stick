@@ -8661,9 +8661,6 @@ impl eframe::App for StickApp {
         if let Some(idx)=layer_settings_window_request {
             self.layer_settings_window=Some(idx);
         }
-        if let Some(in_front)=pose_depth_request {
-            self.set_pose_rig_depth(in_front);
-        }
         if let Some(idx)=self.layer_settings_window {
             let mut open=true;
             let mut changed=false;
@@ -8742,6 +8739,9 @@ impl eframe::App for StickApp {
                 open=false;
             }
             if !open { self.layer_settings_window=None; }
+        }
+        if let Some(in_front)=pose_depth_request {
+            self.set_pose_rig_depth(in_front);
         }
         if let Some(idx)=self.layer_effect_window {
             if let Some(layer)=self.project.layers.get(idx) {
