@@ -8597,6 +8597,7 @@ impl eframe::App for StickApp {
                             ui.horizontal(|ui|{
                                 ui.label(tr(lang,"Background color","لون الخلفية"));
                                 if ui.color_edit_button_srgba_unmultiplied(&mut self.project.background_color).changed() {
+                                    self.project.background_color[3]=255;
                                     background_settings_changed=true;
                                 }
                             });
