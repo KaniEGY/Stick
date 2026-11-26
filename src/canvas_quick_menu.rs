@@ -25,6 +25,7 @@ pub enum QuickMenuAction {
     ToggleShapeVector,
     Color([u8; 4]),
     CustomColor,
+    ToggleBucketVector,
     Close,
 }
 
@@ -65,6 +66,7 @@ pub fn show(
     shape_vector: bool,
     selected_color: [u8; 4],
     custom_label: &str,
+    bucket_mode: Option<bool>,
 ) -> Option<QuickMenuAction> {
     let origin = state.center - egui::vec2(MENU_SIZE * 0.5, MENU_SIZE * 0.5);
     let mut action = None;
@@ -152,6 +154,25 @@ pub fn show(
                     let label_color=if luminance>150 {
                         egui::Color32::BLACK
                     } else {egui::Color32::WHITE};
+                    if let Some(vector)=bucket_mode {
+                        let lower:Vec<_>=(0..=32).map(|i|{
+                            let angle=i as f32*std::f32::consts::PI/32.;
+                            center+egui::vec2(angle.cos(),angle.sin())*30.
+                        }).collect();
+                        ui.painter().add(egui::Shape::convex_polygon(lower,
+                            egui::Color32::from_rgb(30,51,65),egui::Stroke::NONE));
+                        ui.painter().line_segment([center+egui::vec2(-30.,0.),center+egui::vec2(30.,0.)],
+                            egui::Stroke::new(1.,egui::Color32::from_rgb(66,205,242)));
+                        ui.painter().text(center+egui::vec2(0.,-13.),egui::Align2::CENTER_CENTER,
+                            custom_label,egui::FontId::proportional(10.),label_color);
+                        ui.painter().text(center+egui::vec2(0.,13.),egui::Align2::CENTER_CENTER,
+                            if vector {"VECTOR"} else {"RASTER"},egui::FontId::proportional(10.),egui::Color32::WHITE);
+                        if center_response.clicked() {
+                            if let Some(p)=center_response.interact_pointer_pos().filter(|p|p.distance(center)<=31.) {
+                                action=Some(if p.y<center.y {QuickMenuAction::CustomColor} else {QuickMenuAction::ToggleBucketVector});
+                            }
+                        }
+                    } else {
                     ui.painter().text(
                         center,
                         egui::Align2::CENTER_CENTER,
@@ -161,6 +182,7 @@ pub fn show(
                     );
                     if center_response.clicked() {
                         action=Some(QuickMenuAction::CustomColor);
+                    }
                     }
                     let count = colors.len().max(1);
                     for (index, color) in colors.iter().copied().enumerate() {
