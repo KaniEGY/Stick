@@ -139,6 +139,32 @@ impl PixelSelection {
         true
     }
 
+    /// Clip a cropped premultiplied render buffer using canvas coordinates.
+    pub fn clip_crop(&self, rgba: &mut [u8], origin: (u32,u32), size: (u32,u32), invert: bool) -> bool {
+        let Some(expected) = (size.0 as usize).checked_mul(size.1 as usize).and_then(|n|n.checked_mul(4)) else { return false; };
+        if size.0 == 0 || rgba.len() != expected { return false; }
+        for (i,pixel) in rgba.chunks_exact_mut(4).enumerate() {
+            let x=origin.0.saturating_add((i%size.0 as usize) as u32);
+            let y=origin.1.saturating_add((i/size.0 as usize) as u32);
+            if self.contains(x,y)==invert { pixel.fill(0); }
+        }
+        true
+    }
+
+    pub fn translate_mask(&mut self, dx:i32, dy:i32) {
+        if dx==0 && dy==0 {return;}
+        let mut next=vec![false;self.selected.len()];
+        for (i,&selected) in self.selected.iter().enumerate() {
+            if !selected {continue;}
+            let x=(i%self.width as usize) as i64+i64::from(dx);
+            let y=(i/self.width as usize) as i64+i64::from(dy);
+            if x>=0 && y>=0 && x<i64::from(self.width) && y<i64::from(self.height) {
+                next[y as usize*self.width as usize+x as usize]=true;
+            }
+        }
+        self.selected=next;
+    }
+
     /// Zero out all pixels outside the mask. Intended for a temporary brush
     /// render buffer, not for the existing layer's original artwork.
     pub fn clip_paint(&self, rgba: &mut [u8]) -> bool {
