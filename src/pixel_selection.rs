@@ -48,6 +48,33 @@ impl PixelSelection {
         self.selected.fill(false);
     }
 
+    /// Generate a bounded RGBA overlay for the editor. Edges get a stronger
+    /// alpha, while the interior stays transparent enough to see the artwork.
+    /// Large canvases downsample only the preview, never the actual mask.
+    pub fn preview_rgba(&self, rgb: [u8;3]) -> (usize,usize,Vec<u8>) {
+        let step = self.width.max(self.height).div_ceil(2048).max(1);
+        let width = self.width.div_ceil(step);
+        let height = self.height.div_ceil(step);
+        let mut rgba = vec![0; width as usize * height as usize * 4];
+        for y in 0..height {
+            for x in 0..width {
+                let sx = x*step;
+                let sy = y*step;
+                let any = (sy..(sy+step).min(self.height)).any(|yy|
+                    (sx..(sx+step).min(self.width)).any(|xx| self.contains(xx,yy)));
+                if !any { continue; }
+                let edge = sx == 0 || sy == 0 || sx+step >= self.width || sy+step >= self.height
+                    || !self.contains(sx.saturating_sub(1),sy)
+                    || !self.contains(sx,sy.saturating_sub(1))
+                    || !self.contains((sx+step).min(self.width-1),sy)
+                    || !self.contains(sx,(sy+step).min(self.height-1));
+                let i=(y as usize * width as usize+x as usize)*4;
+                rgba[i..i+4].copy_from_slice(&[rgb[0],rgb[1],rgb[2],if edge {205} else {35}]);
+            }
+        }
+        (width as usize,height as usize,rgba)
+    }
+
     /// Magic-wand selection of all pixels of the sampled color, including
     /// disconnected islands. Compare straight RGBA so changing opacity does
     /// not inadvertently turn bright colors into dark matching colors.
