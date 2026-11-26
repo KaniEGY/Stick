@@ -10,6 +10,7 @@ pub enum QuickMenuKind {
     VectorEraser,
     RasterEraser,
     CanvasView,
+    Selection,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,7 +87,7 @@ pub fn show(
                 } else {
                     egui::Color32::from_rgba_unmultiplied(18,24,33,246)
                 },
-                QuickMenuKind::VectorEraser | QuickMenuKind::RasterEraser | QuickMenuKind::CanvasView =>
+                QuickMenuKind::VectorEraser | QuickMenuKind::RasterEraser | QuickMenuKind::CanvasView | QuickMenuKind::Selection =>
                     egui::Color32::from_rgba_unmultiplied(18,24,33,246),
             };
             ui.painter().circle_filled(center,31.0,center_fill);
@@ -189,7 +190,7 @@ pub fn show(
                         }
                     }
                 }
-                QuickMenuKind::VectorEraser | QuickMenuKind::RasterEraser | QuickMenuKind::CanvasView => {}
+                QuickMenuKind::VectorEraser | QuickMenuKind::RasterEraser | QuickMenuKind::CanvasView | QuickMenuKind::Selection => {}
             }
         });
 
