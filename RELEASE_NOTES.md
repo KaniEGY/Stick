@@ -1,5 +1,17 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
+## Smart selection edge refinement / تحسين حواف التحديد الذكي
+
+- Recover anti-aliased mixed-color edge pixels using local contrast and color coverage, rather than blindly expanding the selection across solid outlines.
+- Apply the same corrected edge colors in live brush preview and saved raster paint; smooth embedded raster previews at high zoom.
+- Add adjustable smart-selection color tolerance in the properties panel.
+- Regression coverage includes circular edges, thin outlines, diagonal edges, manual subtraction and saved patch compositing.
+
+- استعادة البكسلات المختلطة على حواف التحديد الذكي مع حماية الخط الخارجي.
+- تطبيق تصحيح الحواف أثناء الرسم والحفظ، وتنعيم معاينة الراستر عند التكبير.
+- إضافة التحكم في حساسية اللون من الخصائص.
+
+
 ## Selection and Raster Bucket / التحديد والتعبئة الراستر
 
 - Selection tool modes: free object selection (blue), global same-color pixel selection (purple), and manual pixel mask (green). Right-click the tool or canvas to switch modes. Deselect is available in the top bar.
