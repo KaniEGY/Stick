@@ -2025,6 +2025,7 @@ struct StickApp {
     transform_axis: Option<char>,
     lasso_dragging_selection: bool,
     selection_mode: u8,
+    smart_selection_tolerance: u8,
     pixel_selection: Option<pixel_selection::PixelSelection>,
     pixel_selection_preview: Option<egui::TextureHandle>,
     pixel_selection_context: Option<(usize,usize,u32,u32)>,
@@ -2253,6 +2254,7 @@ impl StickApp {
             transform_axis: None,
             lasso_dragging_selection: false,
             selection_mode: 0,
+            smart_selection_tolerance: 16,
             pixel_selection: None,
             pixel_selection_preview: None,
             pixel_selection_context: None,
@@ -5747,6 +5749,13 @@ impl StickApp {
                     } else {
                         tr(lang,"Draw a region. Shift adds, Alt subtracts. Drag inside selection to move.","ارسم مساحة. Shift يضيف وAlt يحذف. اسحب داخل التحديد لتحريكه.")
                     });
+                    if self.selection_mode==1 {
+                        ui.add(egui::Slider::new(&mut self.smart_selection_tolerance,0..=80)
+                            .text(tr(lang,"Color tolerance","حساسية اللون")));
+                        ui.small(tr(lang,
+                            "Smart edges recover mixed anti-aliased pixels while protecting the outline. Tolerance applies on the next click.",
+                            "الحواف الذكية بتستعيد البكسلات المختلطة وتحافظ على الحدود. الحساسية بتتطبق مع التحديد التالي."));
+                    }
                     if ui.button(tr(lang,"Deselect","إلغاء التحديد")).clicked() {self.clear_cel_selection();}
                 }
                 if self.active_tool_ui == ActiveToolUI::FreeTransform {
@@ -11487,7 +11496,16 @@ impl eframe::App for StickApp {
                                     let pix=exporter::render_frame_pixmap(&self.project,self.current_frame,
                                         self.project.background_transparent,self.project.background_color);
                                     let seed=(stage_pos.x.floor() as u32,stage_pos.y.floor() as u32);
-                                    if mask.select_color(pix.data(),seed,8,pixel_selection::EditMode::Replace) {
+                                    // The fringe reconstruction uses the visible composite only
+                                    // when painting on the topmost opaque, unmodified layer.
+                                    // On lower/transparent layers, use coverage-only clipping
+                                    // so unrelated artwork is never baked into a lower layer.
+                                    let correct_composite=self.project.layers.get(self.active_layer_idx)
+                                        .is_some_and(|layer|layer.visible && layer.opacity>=0.999
+                                            && layer.effect==LayerEffectPreset::None)
+                                        && !self.project.layers.iter().take(self.active_layer_idx)
+                                            .any(|l|l.visible && l.opacity>0.0 && !l.is_guide);
+                                    if mask.select_smart_color(pix.data(),seed,self.smart_selection_tolerance,correct_composite) {
                                         self.clear_cel_selection();
                                         self.pixel_selection=Some(mask);
                                         self.pixel_selection_context=Some(self.selection_context());
