@@ -17,6 +17,8 @@ mod fill_tools;
 mod fill_render;
 mod eraser_tools;
 mod selection_tools;
+#[cfg(test)]
+mod pixel_selection;
 mod layer_ops;
 mod canvas_sizes;
 mod canvas_appearance;
