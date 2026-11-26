@@ -351,6 +351,21 @@ pub fn flood_fill_polygon_with_options(
     strokes: &[Stroke], point: (f32, f32), canvas: (f32, f32), gap: f32,
     options: FillOptions,
 ) -> Option<Vec<StrokePoint>> {
+    // First try the exact seed with no artificial gap expansion. Thick ink
+    // plus the gap margin can otherwise swallow an entire tiny enclosed loop.
+    // Only fall back to gap closing / nearby seed search if necessary.
+    if gap.is_finite() && gap > 0.0 {
+        if let Some(region) = solve_flood_fill(strokes, point, canvas, 0.0, options, true) {
+            return Some(region);
+        }
+    }
+    solve_flood_fill(strokes, point, canvas, gap, options, false)
+}
+
+fn solve_flood_fill(
+    strokes: &[Stroke], point: (f32, f32), canvas: (f32, f32), gap: f32,
+    options: FillOptions, exact_seed_only: bool,
+) -> Option<Vec<StrokePoint>> {
     use std::collections::{HashMap, VecDeque};
     let (cw, ch) = canvas;
     let (sx, sy) = point;
@@ -500,6 +515,7 @@ pub fn flood_fill_polygon_with_options(
     // a nearby interior component, but NEVER turn the exterior into a fill.
     let mut candidates = Vec::new();
     if wall[seed] {
+        if exact_seed_only { return None; }
         let radius = ((gap.clamp(0.0,14.0)+9.0)/cell).ceil().clamp(2.0,22.0) as isize;
         for dy in -radius..=radius {
             for dx in -radius..=radius {
@@ -541,7 +557,7 @@ pub fn flood_fill_polygon_with_options(
                 }
             }
         }
-        if !hits_edge && count>=8 {
+        if !hits_edge && count>0 {
             selected=Some(visited);
             break;
         }
@@ -632,7 +648,7 @@ pub fn flood_fill_polygon_with_options(
             if !covered[pos-1] { add((x,y+1),(x,y)); }
         }
     }
-    if edge_count < 8 || edge_count > 70_000 { return None; }
+    if edge_count < 4 || edge_count > 70_000 { return None; }
     let start = *edges.keys().min_by_key(|(x,y)| (*y,*x))?;
     let mut at = start;
     let mut ring = Vec::new();
@@ -644,7 +660,7 @@ pub fn flood_fill_polygon_with_options(
         at = next;
         if at == start { break; }
     }
-    if at != start || ring.len() < 8 { return None; }
+    if at != start || ring.len() < 4 { return None; }
 
     // Remove collinear pixel corners: keep stored vector projects compact.
     let mut clean = Vec::<Corner>::new();
@@ -810,6 +826,17 @@ mod tests {
         let fill=polygon_fill_stroke(polygon,[40,180,90,255]);
         assert!(contour_contains(&fill,65.,60.));
         assert!(!contour_contains(&fill,9.,60.));
+    }
+
+    #[test]
+    fn bucket_gap_closing_does_not_swallow_tiny_enclosed_loop() {
+        let mut loop_stroke = shape(&[(40.,40.),(47.,40.),(47.,47.),(40.,47.),(40.,40.)]);
+        loop_stroke.base_width = 4.0;
+        let points = flood_fill_polygon(&[loop_stroke], (43.5,43.5), (100.,100.), 3.0)
+            .expect("gap closing must not erase the visible interior");
+        let fill = polygon_fill_stroke(points, [240,30,60,255]);
+        assert!(contour_contains(&fill,43.5,43.5));
+        assert!(!contour_contains(&fill,30.,43.5));
     }
 
     #[test]

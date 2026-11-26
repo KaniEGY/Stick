@@ -31,8 +31,8 @@ pub fn adaptive_stabilized_xy(
         .unwrap_or(lag);
 
     let base_follow = (1.0 - strength * 0.95).clamp(0.18, 1.0);
-    let motion = (travel / 10.0).clamp(0.0, 1.0);
-    let separation = (lag / 28.0).clamp(0.0, 1.0);
+    let motion = (travel / 5.0).clamp(0.0, 1.0);
+    let separation = (lag / 12.0).clamp(0.0, 1.0);
     let catch_up = motion.max(separation);
     let follow = base_follow + (1.0 - base_follow) * catch_up;
 
@@ -249,6 +249,15 @@ mod tests {
         let fast=adaptive_stabilized_xy((0.,0.),Some((0.,0.)),(20.,0.),0.70);
         assert!(fast.0>18.0, "fast={fast:?}");
         assert_eq!(adaptive_stabilized_xy((2.,3.),Some((2.,3.)),(9.,11.),0.0),(9.,11.));
+    }
+
+    #[test]
+    fn adaptive_stabilizer_catches_moderate_motion_without_tail_lag() {
+        let next = adaptive_stabilized_xy((0.,0.), Some((0.,0.)), (5.,0.), 0.75);
+        assert_eq!(next, (5.,0.));
+        // Even if individual events are tiny, accumulated separation must catch up.
+        let next = adaptive_stabilized_xy((0.,0.), Some((11.,0.)), (12.,0.), 0.75);
+        assert_eq!(next, (12.,0.));
     }
 
     #[test]

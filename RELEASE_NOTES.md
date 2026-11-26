@@ -1,5 +1,16 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
+## Latest drawing fixes / إصلاحات الرسم الجديدة
+
+- Reduced stabilizer tail lag and made freehand sampling responsive at high zoom.
+- The Bucket first tries the exact interior without gap expansion, keeping very small closed regions paintable.
+- Custom textured brush previews use the selected RGB in their alpha masks, consistent with built-in brush textures. Expanded hue regression coverage for built-in textured presets.
+
+- تقليل تأخير حركة الفرشة وتحسين التقاط الحركة عند التكبير.
+- إصلاح حالة الدوائر الصغيرة التي تختفي داخل هامش قفل الفجوات للدلو.
+- تحسين معاينة ألوان الفرش المستوردة وإضافة اختبارات للفرش ذات الخامات المدمجة.
+
+
 ## Previous changes
 
 - The crown beside **Hazem** in the supporters dialog is now clickable and opens his Instagram profile.

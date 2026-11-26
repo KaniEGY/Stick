@@ -466,6 +466,12 @@ mod tests {
             (TextureBrush::Sketch, KritaBrushPreset::SketchPencil),
             (TextureBrush::SoftSketch, KritaBrushPreset::SoftSketchPencil),
             (TextureBrush::Graphite, KritaBrushPreset::GraphitePencil),
+            (TextureBrush::Dry, KritaBrushPreset::DryBrush),
+            (TextureBrush::Chalk, KritaBrushPreset::Chalk),
+            (TextureBrush::Charcoal, KritaBrushPreset::Charcoal),
+            (TextureBrush::Pastel, KritaBrushPreset::SoftPastel),
+            (TextureBrush::Calligraphy, KritaBrushPreset::Calligraphy),
+            (TextureBrush::SketchBrush, KritaBrushPreset::SketchBrush),
         ] {
             let stroke = Stroke {
                 points: vec![
