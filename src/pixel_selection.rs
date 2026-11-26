@@ -341,6 +341,19 @@ mod tests {
     }
 
     #[test]
+    fn cropped_brush_mask_clips_at_canvas_offset_and_can_invert() {
+        let mut s=PixelSelection::empty(4,4).unwrap();
+        s.edit_polygon(&[(2.,2.),(3.,2.),(3.,3.),(2.,3.)],EditMode::Replace);
+        let mut paint=[255u8;16];let mut rest=paint;
+        assert!(s.clip_crop(&mut paint,(1,2),(2,2),false));
+        assert_eq!(paint,[0,0,0,0,255,255,255,255,0,0,0,0,0,0,0,0]);
+        assert!(s.clip_crop(&mut rest,(1,2),(2,2),true));
+        assert_eq!(rest,[255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255]);
+        s.translate_mask(-1,1);
+        assert!(s.contains(1,3)); assert_eq!(s.count(),1);
+    }
+
+    #[test]
     fn invalid_sizes_and_buffers_leave_existing_selection_unchanged() {
         assert!(PixelSelection::empty(u32::MAX,u32::MAX).is_none());
         let mut s = PixelSelection::empty(2,2).unwrap();

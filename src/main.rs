@@ -3241,8 +3241,12 @@ impl StickApp {
 
     fn refresh_pixel_selection_preview(&mut self, ctx: &egui::Context) {
         self.pixel_selection_preview = None;
+        if self.pixel_selection.as_ref().is_some_and(|m|m.count()==0) {
+            self.pixel_selection=None;
+            self.pixel_selection_context=None;
+            return;
+        }
         if let Some(mask) = self.pixel_selection.as_ref() {
-            if mask.count() == 0 { return; }
             let color = self.selection_mode_color();
             let (w,h,rgba) = mask.preview_rgba([color.r(),color.g(),color.b()]);
             self.pixel_selection_preview = Some(ctx.load_texture(
@@ -3380,6 +3384,20 @@ impl StickApp {
     }
 
     fn fill_last_selection(&mut self) {
+        if !self.is_active_layer_locked() {
+            if let Some(mask)=self.pixel_selection.as_ref() {
+                let Some(mut pix)=tiny_skia::Pixmap::new(self.project.width,self.project.height) else {return;};
+                mask.paint_color(pix.data_mut(),self.brush_color);
+                let Some(patch)=raster_patch::from_pixmap(&pix,(0,0)) else {return;};
+                self.save_undo_state();
+                self.ensure_editable_keyframe();
+                if let Some(frame)=self.project.layers.get_mut(self.active_layer_idx)
+                    .and_then(|l|l.keyframes.get_mut(&self.current_frame)) {
+                    frame.strokes.push(patch); self.has_unsaved_changes=true;
+                }
+                return;
+            }
+        }
         if self.last_selection_polygon.len()<3 || self.is_active_layer_locked() {
             self.status_message=tr(self.config.lang,
                 "Make a lasso or box selection first.",
@@ -5721,6 +5739,14 @@ impl StickApp {
         match self.active_tool_ui {
             ActiveToolUI::SelectNormal | ActiveToolUI::SelectLasso | ActiveToolUI::FreeTransform => {
                 ui.strong(tr(lang, "Transform", "خصائص التحويل"));
+                if self.active_tool_ui==ActiveToolUI::SelectLasso && self.selection_mode!=0 {
+                    ui.small(if self.selection_mode==1 {
+                        tr(lang,"Click a color to select matching pixels. Drag the selected area to move it.","اضغط على لون لتحديد البكسلات المشابهة. اسحب داخل التحديد لتحريكه.")
+                    } else {
+                        tr(lang,"Draw a region. Shift adds, Alt subtracts. Drag inside selection to move.","ارسم مساحة. Shift يضيف وAlt يحذف. اسحب داخل التحديد لتحريكه.")
+                    });
+                    if ui.button(tr(lang,"Deselect","إلغاء التحديد")).clicked() {self.clear_cel_selection();}
+                }
                 if self.active_tool_ui == ActiveToolUI::FreeTransform {
                     ui.small(tr(lang,
                         "Click an object to select it, drag empty space for a box selection, then move/scale/rotate with the same tool.",
@@ -6214,7 +6240,7 @@ impl StickApp {
                         self.bucket_reference_all_layers=true;self.bucket_reference_only=false;
                     }
                 });
-                if ui.add_enabled(self.last_selection_polygon.len()>=3,
+                if ui.add_enabled(self.last_selection_polygon.len()>=3 || self.pixel_selection.is_some(),
                     egui::Button::new(tr(lang,"Fill current selection","لوّن التحديد الحالي"))).clicked(){
                     self.fill_last_selection();
                 }
