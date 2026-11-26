@@ -3276,6 +3276,11 @@ impl StickApp {
             let mut piece=if !rest.data().chunks_exact(4).any(|p|p[3]>0) {
                 s
             } else {
+                let margin=if raster_patch::is_patch(&s) {0.} else {s.base_width.abs()*4.+4.};
+                if s.points.iter().any(|p|p.x-margin<0. || p.y-margin<0. || p.x+margin>w as f32 || p.y+margin>h as f32) {
+                    self.status_message=tr(self.config.lang,"Move cancelled: partially selected stroke extends outside canvas","تم إلغاء التحريك لأن جزء من الخط المحدد خارج الكانفا");
+                    return;
+                }
                 let Some(rest_piece)=raster_patch::from_pixmap(&rest,origin) else {return;};
                 let Some(selected_piece)=raster_patch::from_pixmap(&selected,origin) else {return;};
                 output.push(rest_piece);
@@ -4190,6 +4195,11 @@ impl StickApp {
 
     fn commit_stroke_with_symmetry(&mut self, stroke: Stroke, now_time: f64) {
         if let Some(ref sym_name) = self.editing_symbol_name.clone() {
+            if self.pixel_selection.is_some() {
+                self.status_message=tr(self.config.lang,"Pixel selection is available on canvas layers, not symbol editing","تحديد البكسلات متاح في طبقات الكانفا، مش تحرير الرموز");
+                self.undo_stack.pop();
+                return;
+            }
             if let Some(sym) = self.project.library_symbols.get_mut(sym_name) {
                 let kf_strokes = sym.nested_keyframes.entry(self.current_frame).or_insert_with(|| sym.strokes.clone());
                 kf_strokes.push(stroke.clone());
@@ -8338,6 +8348,7 @@ impl eframe::App for StickApp {
                                 ActiveToolUI::SelectLasso => {
                                     for (mode,en,ar) in [(0u8,"Free","تحديد حر"),(1,"Smart","تحديد ذكي"),(2,"Manual","تحديد يدوي")] {
                                         if ui.selectable_label(self.selection_mode==mode,tr(lang,en,ar)).clicked() {
+                                            if mode==0 {self.clear_cel_selection();}
                                             self.selection_mode=mode;
                                             self.active_tool_ui=ActiveToolUI::SelectLasso;
                                             self.refresh_pixel_selection_preview(ctx);
@@ -10449,6 +10460,8 @@ impl eframe::App for StickApp {
                 self.pixel_selection=None;
                 self.pixel_selection_preview=None;
                 self.pixel_selection_context=None;
+                self.pixel_drag_origin=None;
+                self.pixel_drag_end=None;
             }
             let secondary_clicked=ctx.input(|i|i.pointer.secondary_clicked());
             if (secondary_clicked || quick_color_pressed) && is_over_canvas && !any_modal_open {
@@ -10488,6 +10501,7 @@ impl eframe::App for StickApp {
                         let items=[("○",free.as_str()),("✦",smart.as_str()),("+",manual.as_str()),("×",clear.as_str())];
                         if let Some(choice)=canvas_quick_menu::show_mode_menu(ctx,menu,&items,Some(self.selection_mode as usize)) {
                             if choice<3 {
+                                if choice==0 {self.clear_cel_selection();}
                                 self.selection_mode=choice as u8;
                                 self.refresh_pixel_selection_preview(ctx);
                             } else if choice==3 { self.clear_cel_selection(); }
@@ -11971,11 +11985,9 @@ impl eframe::App for StickApp {
                 }
             }
             if let Some(stroke) = &self.current_stroke {
-                for preview in self.symmetry_strokes(stroke.clone()) {
+                for (slot,preview) in self.symmetry_strokes(stroke.clone()).into_iter().enumerate() {
                     if let Some(mask)=self.pixel_selection.as_ref() {
-                        if let Some(patch)=raster_patch::clipped(&preview,self.project.width,self.project.height,mask) {
-                            draw_stroke_pro(&painter,&patch,None,1.0,scale,0.0,0.0,&to_screen);
-                        }
+                        raster_patch::preview_clipped(&painter,&preview,self.project.width,self.project.height,mask,slot,&to_screen);
                         continue;
                     }
                     if !preview.is_vector
@@ -11995,8 +12007,12 @@ impl eframe::App for StickApp {
                 if self.shape_fill_enabled && self.selected_shape_kind != GeometricShapeKind::StraightLine {
                     shape.fill_color = Some(self.brush_color);
                 }
-                for preview in self.symmetry_strokes(shape) {
-                    draw_stroke_pro(&painter, &preview, None, 1.0, scale, 0.0, 0.0, &to_screen);
+                for (slot,preview) in self.symmetry_strokes(shape).into_iter().enumerate() {
+                    if let Some(mask)=self.pixel_selection.as_ref() {
+                        raster_patch::preview_clipped(&painter,&preview,self.project.width,self.project.height,mask,slot+4,&to_screen);
+                    } else {
+                        draw_stroke_pro(&painter, &preview, None, 1.0, scale, 0.0, 0.0, &to_screen);
+                    }
                 }
             }
             // Display chrome only, intentionally excluded from all exports.
@@ -12127,7 +12143,15 @@ impl eframe::App for StickApp {
                         painter.circle_stroke(rect.center(), icon_size*0.54,
                             egui::Stroke::new(1.2, tool_color));
                     }
-                    draw_tool_ui_icon(&painter, rect, self.active_tool_ui, false);
+                    if self.active_tool_ui==ActiveToolUI::SelectLasso {
+                        let c=p;
+                        let col=self.selection_mode_color();
+                        let pts=[c+egui::vec2(-7.,-5.),c+egui::vec2(5.,-7.),c+egui::vec2(8.,3.),c+egui::vec2(-2.,7.),c+egui::vec2(-8.,2.)];
+                        painter.add(egui::Shape::closed_line(pts.to_vec(),egui::Stroke::new(1.5,col)));
+                        for point in pts {painter.circle_filled(point,1.3,col);}
+                    } else {
+                        draw_tool_ui_icon(&painter, rect, self.active_tool_ui, false);
+                    }
                 }
             }
         });
