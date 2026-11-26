@@ -547,6 +547,10 @@ pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
         return;
     }
 
+    if crate::raster_patch::is_patch(stroke) {
+        crate::raster_patch::preview(painter,stroke,stroke.opacity*layer_opacity,ox,oy,to_screen);
+        return;
+    }
     let c = override_color.unwrap_or(stroke.color);
     let combined_opacity = stroke.opacity.clamp(0.0, 1.0) * layer_opacity.clamp(0.0, 1.0);
     let eff_alpha = ((c[3] as f32) * combined_opacity) as u8;
