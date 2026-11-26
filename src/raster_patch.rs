@@ -144,6 +144,22 @@ fn pixel_inside_disc(s:&Stroke,x:u32,y:u32,w:u32,h:u32,c:(f32,f32),r:f32)->bool 
     (px-c.0).powi(2)+(py-c.1).powi(2)<=r*r
 }
 
+pub fn color_at(s:&Stroke,x:f32,y:f32)->Option<[u8;4]> {
+    if !x.is_finite() || !y.is_finite() || s.opacity<=0. {return None;}
+    let [a,b,_,d,..]=s.points.as_slice() else {return None;};
+    let (ux,uy,vx,vy)=(b.x-a.x,b.y-a.y,d.x-a.x,d.y-a.y);
+    let det=ux*vy-uy*vx;
+    if det.abs()<0.00001 {return None;}
+    let (px,py)=(x-a.x,y-a.y);
+    let (u,v)=((px*vy-py*vx)/det,(ux*py-uy*px)/det);
+    if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {return None;}
+    let pix=decode(s)?;
+    let (x,y)=((u*pix.width() as f32) as u32,(v*pix.height() as f32) as u32);
+    let c=pix.pixels().get(y as usize*pix.width() as usize+x as usize)?.demultiply();
+    let alpha=(c.alpha() as f32*s.opacity.clamp(0.,1.)).round() as u8;
+    (alpha>0).then_some([c.red(),c.green(),c.blue(),alpha])
+}
+
 pub fn touches_circle(s:&Stroke,c:(f32,f32),r:f32)->bool {
     if !circle_hits_bounds(s,c,r) {return false;}
     let Some(pix)=decode(s) else {return false;};

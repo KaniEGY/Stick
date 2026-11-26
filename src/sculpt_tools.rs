@@ -86,7 +86,7 @@ pub fn sculpt(strokes:&mut [Stroke],at:(f32,f32),motion:(f32,f32),radius:f32,str
     let mut changed=false;
 
     for stroke in strokes {
-        if stroke.points.is_empty(){continue;}
+        if stroke.points.is_empty() || crate::raster_patch::is_patch(stroke) {continue;}
         let pad=radius+stroke.base_width.max(1.0)*0.5;
         if !stroke_near(stroke,at,pad){continue;}
 
