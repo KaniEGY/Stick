@@ -396,11 +396,14 @@ pub fn preview(
     let ctx=painter.ctx();
     let mut meshes=Vec::with_capacity(brush.tips.len());
     for (i,tip) in brush.tips.iter().enumerate() {
-        let key=egui::Id::new(("stick_custom_brush_tip",id.to_owned(),i));
+        // Match built-in texture brushes: cache the actual selected RGB in the
+        // alpha mask, rather than multiplying a white texture by a colored
+        // translucent vertex in the preview shader.
+        let key=egui::Id::new(("stick_custom_brush_tip_rgb",id.to_owned(),i,rgba[0],rgba[1],rgba[2]));
         let cached=ctx.data(|d|d.get_temp::<egui::TextureHandle>(key));
         let tex=cached.unwrap_or_else(||{
             let pixels=tip.data.iter()
-                .map(|&a|egui::Color32::from_rgba_unmultiplied(255,255,255,a))
+                .map(|&a|egui::Color32::from_rgba_unmultiplied(rgba[0],rgba[1],rgba[2],a))
                 .collect();
             let handle=ctx.load_texture(
                 format!("custom brush tip {id}:{i}"),
@@ -417,7 +420,7 @@ pub fn preview(
         let mesh=&mut meshes[stamp.tip_index];
         let start=mesh.vertices.len() as u32;
         let alpha=(rgba[3] as f32*stamp.flow).round().clamp(0.0,255.0) as u8;
-        let color=egui::Color32::from_rgba_unmultiplied(rgba[0],rgba[1],rgba[2],alpha);
+        let color=egui::Color32::from_white_alpha(alpha);
         for (u,v) in [(0.,0.),(1.,0.),(1.,1.),(0.,1.)] {
             let [x,y]=stamp.corner(u,v);
             mesh.vertices.push(egui::epaint::Vertex{
