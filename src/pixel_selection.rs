@@ -5,6 +5,19 @@
 
 const MAX_PIXELS: usize = 16 * 1024 * 1024;
 const MAX_POLYGON_POINTS: usize = 4096;
+const MAX_SMART_EDGES: usize = 1_048_576;
+
+// A mixed boundary pixel belongs partly to the target color and partly to
+// a different color (for example, the blue outline around a red circle).
+// Preserve the non-target contribution when applying new opaque paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SmartEdge {
+    index: usize,
+    original: [u8;4],
+    reference: [u8;4],
+    coverage: u8,
+    correct_composite: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditMode {
@@ -18,13 +31,14 @@ pub struct PixelSelection {
     width: u32,
     height: u32,
     selected: Vec<bool>,
+    smart_edges: Vec<SmartEdge>,
 }
 
 impl PixelSelection {
     pub fn empty(width: u32, height: u32) -> Option<Self> {
         let count = (width as usize).checked_mul(height as usize)?;
         if count == 0 || count > MAX_PIXELS { return None; }
-        Some(Self { width, height, selected: vec![false; count] })
+        Some(Self { width, height, selected: vec![false; count], smart_edges: Vec::new() })
     }
 
     fn index(&self, x: u32, y: u32) -> Option<usize> {
@@ -46,6 +60,7 @@ impl PixelSelection {
 
     pub fn clear(&mut self) {
         self.selected.fill(false);
+        self.smart_edges.clear();
     }
 
     /// Generate a bounded RGBA overlay for the editor. Edges get a stronger
@@ -83,6 +98,7 @@ impl PixelSelection {
         if !self.valid_pixels(rgba) { return false; }
         let Some(index) = self.index(seed.0, seed.1) else { return false; };
         let reference = straight_rgba(&rgba[index*4..index*4+4]);
+        self.smart_edges.clear();
         for (selected, pixel) in self.selected.iter_mut().zip(rgba.chunks_exact(4)) {
             let matches = if reference[3] == 0 {
                 pixel[3] == 0
@@ -98,6 +114,63 @@ impl PixelSelection {
                 EditMode::Subtract => *selected && !matches,
             };
         }
+        true
+    }
+
+    /// Global magic wand with edge-aware antialias recovery. Do not simply
+    /// dilate the mask: a solid contrasting outline, even one pixel wide,
+    /// must stay protected. Only recover adjacent pixels explainable as
+    /// mixtures of the selected color and a local, unselected color.
+    pub fn select_smart_color(&mut self, rgba:&[u8], seed:(u32,u32),
+        tolerance:u8, correct_composite:bool) -> bool {
+        if !self.valid_pixels(rgba) {return false;}
+        let Some(start)=self.index(seed.0,seed.1) else {return false;};
+        let reference=straight_rgba(&rgba[start*4..start*4+4]);
+        if !self.select_color(rgba,seed,tolerance,EditMode::Replace) {return false;}
+        let w=self.width as usize; let h=self.height as usize;
+        let core=self.selected.clone();
+        let mut edges=Vec::new();
+        // Inspect one native-pixel band, including diagonal neighbors.
+        // This bounds the refinement and prevents gradient chaining.
+        for i in 0..core.len() {
+            if core[i] {continue;}
+            let x=i%w; let y=i/w;
+            let x0=x.saturating_sub(1); let x1=(x+1).min(w-1);
+            let y0=y.saturating_sub(1); let y1=(y+1).min(h-1);
+            if !(y0..=y1).any(|yy|(x0..=x1).any(|xx|core[yy*w+xx])) {continue;}
+            let original=straight_rgba(&rgba[i*4..i*4+4]);
+            let mut best=None::<(f32,u8)>;
+            if reference[3]==255 && original[3]==255 {
+                // Find a genuine neighboring non-target endpoint. Prefer the
+                // strongest compatible contrast instead of another fringe pixel.
+                let mut strength=0.0_f32;
+                for yy in y0..=y1 {
+                    for xx in x0..=x1 {
+                        let j=yy*w+xx;
+                        if j==i || core[j] {continue;}
+                        let outside=straight_rgba(&rgba[j*4..j*4+4]);
+                        if outside[3]!=255 {continue;}
+                        if let Some((coverage,contrast,error))=mixed_color(reference,original,outside) {
+                            if best.is_none() || contrast>strength && error<=best.unwrap().0+25.
+                                || error+25.<best.unwrap().0 {
+                                best=Some((error,coverage)); strength=contrast;
+                            }
+                        }
+                    }
+                }
+            } else if reference[3]>0 && original[3]>0 && original[3]<reference[3]
+                && original[..3].iter().zip(&reference[..3]).all(|(&a,&b)|a.abs_diff(b)<=tolerance.max(16)) {
+                // Transparent antialiasing with the same pigment.
+                best=Some((0.,((original[3] as u16*255)/reference[3] as u16) as u8));
+            }
+            if let Some((_,coverage))=best {
+                if edges.len()>=MAX_SMART_EDGES {break;}
+                edges.push(SmartEdge{index:i,original,reference,coverage,
+                    correct_composite:correct_composite && original[3]==255 && reference[3]==255});
+            }
+        }
+        for edge in &edges {self.selected[edge.index]=true;}
+        self.smart_edges=edges;
         true
     }
 
@@ -131,6 +204,10 @@ impl PixelSelection {
     pub fn intersect(&mut self, other:&Self) -> bool {
         if self.width!=other.width || self.height!=other.height {return false;}
         for (a,&b) in self.selected.iter_mut().zip(&other.selected) {*a &= b;}
+        self.smart_edges.retain(|e|self.selected[e.index]);
+        if self.smart_edges.is_empty() {
+            self.smart_edges.extend(other.smart_edges.iter().copied().filter(|e|self.selected[e.index]));
+        }
         true
     }
 
@@ -169,6 +246,7 @@ impl PixelSelection {
                 self.selected[row+start..row+end].fill(mode != EditMode::Subtract);
             }
         }
+        self.smart_edges.retain(|e|self.selected[e.index]);
         true
     }
 
@@ -180,6 +258,20 @@ impl PixelSelection {
             let x=origin.0.saturating_add((i%size.0 as usize) as u32);
             let y=origin.1.saturating_add((i/size.0 as usize) as u32);
             if self.contains(x,y)==invert { pixel.fill(0); }
+        }
+        true
+    }
+
+    /// Brush clipping differs from object movement. At an opaque mixed edge,
+    /// reconstruct the correct new composite color instead of leaving red
+    /// hairlines or painting the entire blue outline pixel purple.
+    pub fn clip_brush_crop(&self, rgba:&mut [u8], origin:(u32,u32), size:(u32,u32))->bool {
+        if !self.clip_crop(rgba,origin,size,false) {return false;}
+        for edge in &self.smart_edges {
+            let (x,y)=((edge.index%self.width as usize) as u32,(edge.index/self.width as usize) as u32);
+            if x<origin.0 || y<origin.1 || x-origin.0>=size.0 || y-origin.1>=size.1 {continue;}
+            let i=((y-origin.1) as usize*size.0 as usize+(x-origin.0) as usize)*4;
+            refine_paint_pixel(&mut rgba[i..i+4],edge);
         }
         true
     }
@@ -196,6 +288,8 @@ impl PixelSelection {
             }
         }
         self.selected=next;
+        // The reference composite no longer describes the translated edge.
+        self.smart_edges.clear();
     }
 
     /// Zero out all pixels outside the mask. Intended for a temporary brush
@@ -216,8 +310,14 @@ impl PixelSelection {
         let premultiplied = [
             mul_alpha(color[0], a), mul_alpha(color[1], a), mul_alpha(color[2], a), a
         ];
-        for (&selected, pixel) in self.selected.iter().zip(rgba.chunks_exact_mut(4)) {
-            if selected { source_over(pixel, &premultiplied); }
+        let mut edges=self.smart_edges.iter().peekable();
+        for (i,(&selected, pixel)) in self.selected.iter().zip(rgba.chunks_exact_mut(4)).enumerate() {
+            if !selected {continue;}
+            let mut paint=premultiplied;
+            if edges.peek().is_some_and(|e|e.index==i) {
+                if let Some(edge)=edges.next() {refine_paint_pixel(&mut paint,edge);}
+            }
+            source_over(pixel,&paint);
         }
         true
     }
@@ -245,7 +345,44 @@ impl PixelSelection {
             next[j] = true;
         }
         self.selected = next;
+        self.smart_edges.clear();
         true
+    }
+}
+
+/// Return target coverage for a pixel lying on the color line between
+/// target and neighboring non-target pigment. Reject solid non-target pixels
+/// and unrelated colors; tolerate small 8-bit rasterization rounding errors.
+fn mixed_color(target:[u8;4],pixel:[u8;4],outside:[u8;4])->Option<(u8,f32,f32)> {
+    let mut contrast=0.; let mut dot=0.;
+    for c in 0..3 {
+        let d=target[c] as f32-outside[c] as f32;
+        contrast+=d*d; dot+=(pixel[c] as f32-outside[c] as f32)*d;
+    }
+    if contrast<32.*32. {return None;}
+    let t=dot/contrast;
+    if !(0.035..0.985).contains(&t) {return None;}
+    let mut error=0.;
+    for c in 0..3 {
+        let expected=outside[c] as f32+(target[c] as f32-outside[c] as f32)*t;
+        error+=(pixel[c] as f32-expected).powi(2);
+    }
+    if error>3.*10.*10. {return None;}
+    Some(((t*255.).round() as u8,contrast,error))
+}
+
+fn refine_paint_pixel(p:&mut [u8],edge:&SmartEdge) {
+    if p[3]==0 {return;}
+    if edge.correct_composite {
+        let a=p[3];
+        let paint=straight_rgba(p);
+        for c in 0..3 {
+            let delta=paint[c] as f32-edge.reference[c] as f32;
+            let corrected=(edge.original[c] as f32+delta*edge.coverage as f32/255.).round().clamp(0.,255.) as u8;
+            p[c]=mul_alpha(corrected,a);
+        }
+    } else {
+        for c in p { *c=mul_alpha(*c,edge.coverage); }
     }
 }
 
@@ -279,6 +416,43 @@ mod tests {
         assert_eq!(s.count(),2);
         assert!(s.contains(0,0) && s.contains(2,0));
         assert!(!s.contains(1,0) && !s.contains(3,0));
+    }
+
+    #[test]
+    fn smart_selection_recovers_antialiased_red_blue_edge_without_covering_outline() {
+        let rgba=[255,0,0,255, 255,0,0,255, 128,0,127,255, 0,0,255,255, 0,0,255,255];
+        let mut s=PixelSelection::empty(5,1).unwrap();
+        assert!(s.select_smart_color(&rgba,(0,0),8,true));
+        assert_eq!(s.count(),3);
+        assert!(s.contains(2,0)); assert!(!s.contains(3,0));
+        let mut paint=[0u8;20];s.paint_color(&mut paint,[0,255,0,255]);
+        assert_eq!(&paint[0..4],&[0,255,0,255]);
+        assert_eq!(&paint[8..12],&[0,128,127,255]);
+        assert_eq!(&paint[12..16],&[0,0,0,0]);
+        let mut brush=[0,255,0,255].repeat(5);
+        assert!(s.clip_brush_crop(&mut brush,(0,0),(5,1)));
+        assert_eq!(brush,paint);
+    }
+
+    #[test]
+    fn smart_selection_does_not_bridge_a_solid_one_pixel_outline() {
+        let rgba=[255,0,0,255, 0,0,255,255, 255,0,0,255, 0,255,0,255];
+        let mut s=PixelSelection::empty(4,1).unwrap();
+        s.select_smart_color(&rgba,(0,0),8,true);
+        assert_eq!(s.count(),2);
+        assert!(!s.contains(1,0) && !s.contains(3,0));
+    }
+
+    #[test]
+    fn smart_selection_recovers_diagonal_edges_and_keeps_manual_subtract() {
+        let mut rgba=[0,0,255,255].repeat(9);
+        rgba[0..4].copy_from_slice(&[255,0,0,255]);
+        rgba[16..20].copy_from_slice(&[64,0,191,255]);
+        let mut s=PixelSelection::empty(3,3).unwrap();
+        s.select_smart_color(&rgba,(0,0),8,true);
+        assert!(s.contains(1,1));
+        s.edit_polygon(&[(1.,1.),(2.,1.),(2.,2.),(1.,2.)],EditMode::Subtract);
+        assert!(!s.contains(1,1)); assert!(s.smart_edges.is_empty());
     }
 
     #[test]
