@@ -17,7 +17,6 @@ mod fill_tools;
 mod fill_render;
 mod eraser_tools;
 mod selection_tools;
-#[cfg(test)]
 mod pixel_selection;
 mod layer_ops;
 mod canvas_sizes;
@@ -2024,6 +2023,10 @@ struct StickApp {
     transform_rotate_pivot: Option<egui::Pos2>,
     transform_axis: Option<char>,
     lasso_dragging_selection: bool,
+    selection_mode: u8,
+    pixel_selection: Option<pixel_selection::PixelSelection>,
+    pixel_selection_preview: Option<egui::TextureHandle>,
+    pixel_selection_context: Option<(usize,usize,u32,u32)>,
     selected_text_item_index: Option<usize>,
     selected_media_idx: Option<usize>,
     selection_rect_start: Option<egui::Pos2>,
@@ -2245,6 +2248,10 @@ impl StickApp {
             transform_rotate_pivot: None,
             transform_axis: None,
             lasso_dragging_selection: false,
+            selection_mode: 0,
+            pixel_selection: None,
+            pixel_selection_preview: None,
+            pixel_selection_context: None,
             selected_text_item_index: None,
             selected_media_idx: None,
             selection_rect_start: None,
@@ -3183,6 +3190,9 @@ impl StickApp {
     }
 
     fn clear_cel_selection(&mut self) {
+        self.pixel_selection = None;
+        self.pixel_selection_preview = None;
+        self.pixel_selection_context = None;
         self.selected_stroke_indices.clear();
         self.selected_vector_node = None;
         self.selected_vector_nodes.clear();
@@ -3198,6 +3208,38 @@ impl StickApp {
         self.selection_rect_current = None;
         self.lasso_points.clear();
         self.last_selection_polygon.clear();
+    }
+
+    fn selection_mode_color(&self) -> egui::Color32 {
+        match self.selection_mode {
+            1 => egui::Color32::from_rgb(185,132,255),
+            2 => egui::Color32::from_rgb(55,217,149),
+            _ => egui::Color32::from_rgb(56,189,248),
+        }
+    }
+
+    fn selection_mode_label(&self, lang: AppLang) -> String {
+        match self.selection_mode {
+            1 => tr(lang,"Smart selection","تحديد ذكي"),
+            2 => tr(lang,"Manual selection","تحديد يدوي"),
+            _ => tr(lang,"Free selection","تحديد حر"),
+        }
+    }
+
+    fn selection_context(&self) -> (usize,usize,u32,u32) {
+        (self.active_layer_idx,self.current_frame,self.project.width,self.project.height)
+    }
+
+    fn refresh_pixel_selection_preview(&mut self, ctx: &egui::Context) {
+        self.pixel_selection_preview = None;
+        if let Some(mask) = self.pixel_selection.as_ref() {
+            if mask.count() == 0 { return; }
+            let color = self.selection_mode_color();
+            let (w,h,rgba) = mask.preview_rgba([color.r(),color.g(),color.b()]);
+            self.pixel_selection_preview = Some(ctx.load_texture(
+                "pixel selection mask",egui::ColorImage::from_rgba_unmultiplied([w,h],&rgba),
+                egui::TextureOptions::NEAREST));
+        }
     }
 
     fn save_undo_state(&mut self) {
@@ -7962,6 +8004,14 @@ impl eframe::App for StickApp {
                         self.workspace_mode=WorkspaceMode::Launcher;
                     }
 
+                    if self.pixel_selection.is_some() || !self.selected_stroke_indices.is_empty()
+                        || !self.last_selection_polygon.is_empty() || self.selected_text_item_index.is_some()
+                        || self.selected_media_idx.is_some() {
+                        if ui.button(tr(lang,"Deselect","إلغاء التحديد")).clicked() {
+                            self.clear_cel_selection();
+                        }
+                    }
+
                     let can_u=!self.undo_stack.is_empty();
                     let (ur,uresp)=ui.allocate_exact_size(egui::vec2(28.0,24.0),egui::Sense::click());
                     draw_undo_redo_arrow(ui.painter(),ur,true,can_u);
@@ -8134,7 +8184,12 @@ impl eframe::App for StickApp {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     for tool in TOOLBAR_ITEMS {
                         let selected = self.active_tool_ui == tool;
-                        let name = tool_display_name(tool, lang);
+                        let name = if tool == ActiveToolUI::SelectLasso {
+                            self.selection_mode_label(lang)
+                        } else { tool_display_name(tool, lang) };
+                        let tool_color = if tool == ActiveToolUI::SelectLasso {
+                            self.selection_mode_color()
+                        } else { get_tool_ui_color(tool) };
                         let key = tool_shortcut(tool, &self.config);
                         let width = ui.available_width().max(170.0);
                         let (rect, response) = ui.allocate_exact_size(
@@ -8150,7 +8205,7 @@ impl eframe::App for StickApp {
                         ui.painter().rect_filled(rect, 6.0, bg);
                         if selected {
                             ui.painter().rect_stroke(rect.shrink(0.7),6.0,
-                                egui::Stroke::new(1.6,get_tool_ui_color(tool)));
+                                egui::Stroke::new(1.6,tool_color));
                         }
                         if self.online_session.is_some() {
                             if let Some(member) = self.online_participants.iter().find(|p|
@@ -8166,7 +8221,17 @@ impl eframe::App for StickApp {
                         let icon_rect = egui::Rect::from_min_size(
                             rect.left_top() + egui::vec2(5.0, 2.0), egui::vec2(30.0, 30.0)
                         );
-                        draw_tool_ui_icon(ui.painter(), icon_rect, tool, selected);
+                        if tool == ActiveToolUI::SelectLasso {
+                            let c=icon_rect.center();
+                            let pts=[c+egui::vec2(-10.,-7.),c+egui::vec2(7.,-10.),
+                                c+egui::vec2(11.,5.),c+egui::vec2(-3.,10.),c+egui::vec2(-11.,3.)];
+                            ui.painter().add(egui::Shape::closed_line(pts.to_vec(),egui::Stroke::new(1.8,tool_color)));
+                            for pt in pts {ui.painter().circle_filled(pt,1.7,tool_color);}
+                            let mark=match self.selection_mode {1=>"✦",2=>"+",_=>"·"};
+                            ui.painter().text(c,egui::Align2::CENTER_CENTER,mark,egui::FontId::proportional(13.),tool_color);
+                        } else {
+                            draw_tool_ui_icon(ui.painter(), icon_rect, tool, selected);
+                        }
                         ui.painter().text(
                             rect.left_center() + egui::vec2(43.0, 0.0),
                             egui::Align2::LEFT_CENTER,
@@ -8180,6 +8245,19 @@ impl eframe::App for StickApp {
                             ui.strong(tr(lang, "Quick tool options", "اختيارات الأداة السريعة"));
                             ui.separator();
                             match tool {
+                                ActiveToolUI::SelectLasso => {
+                                    for (mode,en,ar) in [(0u8,"Free","تحديد حر"),(1,"Smart","تحديد ذكي"),(2,"Manual","تحديد يدوي")] {
+                                        if ui.selectable_label(self.selection_mode==mode,tr(lang,en,ar)).clicked() {
+                                            self.selection_mode=mode;
+                                            self.active_tool_ui=ActiveToolUI::SelectLasso;
+                                            self.refresh_pixel_selection_preview(ctx);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                    if ui.button(tr(lang,"Deselect","إلغاء التحديد")).clicked() {
+                                        self.clear_cel_selection(); ui.close_menu();
+                                    }
+                                }
                                 ActiveToolUI::Sculpt => {
                                     ui.add(egui::Slider::new(&mut self.sculpt_radius,8.0..=360.0)
                                         .text(tr(lang,"Radius","حجم الصباع")));
@@ -10277,6 +10355,11 @@ impl eframe::App for StickApp {
             self.canvas_primary_capture = update_canvas_primary_capture(
                 self.canvas_primary_capture, pointer_pressed, pointer_down, press_started_on_canvas);
 
+            if self.pixel_selection_context.is_some_and(|c| c != self.selection_context()) {
+                self.pixel_selection=None;
+                self.pixel_selection_preview=None;
+                self.pixel_selection_context=None;
+            }
             let secondary_clicked=ctx.input(|i|i.pointer.secondary_clicked());
             if (secondary_clicked || quick_color_pressed) && is_over_canvas && !any_modal_open {
                 if let Some(center)=pointer_pos {
@@ -10289,6 +10372,7 @@ impl eframe::App for StickApp {
                     } else {
                         match self.active_tool_ui {
                             ActiveToolUI::ShapeLine=>Some(canvas_quick_menu::QuickMenuKind::Shapes),
+                            ActiveToolUI::SelectLasso=>Some(canvas_quick_menu::QuickMenuKind::Selection),
                             ActiveToolUI::VectorEraser=>Some(canvas_quick_menu::QuickMenuKind::VectorEraser),
                             ActiveToolUI::EraserRed | ActiveToolUI::EraserGreen=>
                                 Some(canvas_quick_menu::QuickMenuKind::RasterEraser),
@@ -10306,6 +10390,20 @@ impl eframe::App for StickApp {
 
             if let Some(menu)=self.canvas_quick_menu {
                 match menu.kind {
+                    canvas_quick_menu::QuickMenuKind::Selection=>{
+                        let free=tr(lang,"FREE","حر");
+                        let smart=tr(lang,"SMART","ذكي");
+                        let manual=tr(lang,"MANUAL","يدوي");
+                        let clear=tr(lang,"CLEAR","إلغاء");
+                        let items=[("○",free.as_str()),("✦",smart.as_str()),("+",manual.as_str()),("×",clear.as_str())];
+                        if let Some(choice)=canvas_quick_menu::show_mode_menu(ctx,menu,&items,Some(self.selection_mode as usize)) {
+                            if choice<3 {
+                                self.selection_mode=choice as u8;
+                                self.refresh_pixel_selection_preview(ctx);
+                            } else if choice==3 { self.clear_cel_selection(); }
+                            self.canvas_quick_menu=None;
+                        }
+                    }
                     canvas_quick_menu::QuickMenuKind::VectorEraser=>{
                         let selected=Some(match self.vector_eraser_mode {
                             drawing_power::VectorEraseMode::Segment=>0,
@@ -11233,6 +11331,33 @@ impl eframe::App for StickApp {
                                 }
                             }
                         }
+                        ActiveToolUI::SelectLasso if self.selection_mode==1 && pointer_pressed => {
+                            let (w,h)=(self.project.width,self.project.height);
+                            if stage_pos.x>=0.0 && stage_pos.y>=0.0
+                                && stage_pos.x<w as f32 && stage_pos.y<h as f32 {
+                                if let Some(mut mask)=pixel_selection::PixelSelection::empty(w,h) {
+                                    let pix=exporter::render_frame_pixmap(&self.project,self.current_frame,
+                                        self.project.background_transparent,self.project.background_color);
+                                    let seed=(stage_pos.x.floor() as u32,stage_pos.y.floor() as u32);
+                                    if mask.select_color(pix.data(),seed,8,pixel_selection::EditMode::Replace) {
+                                        self.clear_cel_selection();
+                                        self.pixel_selection=Some(mask);
+                                        self.pixel_selection_context=Some(self.selection_context());
+                                        self.refresh_pixel_selection_preview(ctx);
+                                    }
+                                }
+                            }
+                        }
+                        ActiveToolUI::SelectLasso if self.selection_mode==1 => {}
+                        ActiveToolUI::SelectLasso if self.selection_mode==2 => {
+                            if pointer_pressed {
+                                self.lasso_points.clear();
+                                self.lasso_points.push(stage_pos);
+                            } else if pointer_down && self.lasso_points.last()
+                                .is_some_and(|p|p.distance(stage_pos)>=1.0) && self.lasso_points.len()<4096 {
+                                self.lasso_points.push(stage_pos);
+                            }
+                        }
                         ActiveToolUI::SelectLasso => {
                             if pointer_pressed {
                                 let existing = self.selected_canvas_bounds().is_some_and(
@@ -11314,7 +11439,18 @@ impl eframe::App for StickApp {
                         }
                     }
                 }
-                if self.lasso_points.len() >= 3 {
+                if self.lasso_points.len() >= 3 && self.active_tool_ui==ActiveToolUI::SelectLasso && self.selection_mode==2 {
+                    let (w,h)=(self.project.width,self.project.height);
+                    let points:Vec<_>=self.lasso_points.iter().map(|p|(p.x,p.y)).collect();
+                    let edit=ctx.input(|i|if i.modifiers.alt {pixel_selection::EditMode::Subtract}
+                        else if i.modifiers.shift || self.pixel_selection.is_some() {pixel_selection::EditMode::Add}
+                        else {pixel_selection::EditMode::Replace});
+                    let mut mask=self.pixel_selection.take().or_else(||pixel_selection::PixelSelection::empty(w,h));
+                    if let Some(ref mut m)=mask {m.edit_polygon(&points,edit);}
+                    self.pixel_selection=mask;
+                    self.pixel_selection_context=Some(self.selection_context());
+                    self.refresh_pixel_selection_preview(ctx);
+                } else if self.lasso_points.len() >= 3 {
                     self.last_selection_polygon=self.lasso_points.clone();
                     if let Some(layer) = self.project.layers.get(self.active_layer_idx) {
                         let frame = self.project.evaluate_layer_at_frame(layer, self.current_frame);
@@ -11586,6 +11722,18 @@ impl eframe::App for StickApp {
                 } else {
                     let _=self.delete_media_item_or_layer(layer_index,media_index);
                 }
+            }
+
+            if let Some(tex)=self.pixel_selection_preview.as_ref() {
+                let mut mesh=egui::Mesh::with_texture(tex.id());
+                for (x,y,u,v) in [(0.,0.,0.,0.),(stage_w,0.,1.,0.),
+                    (stage_w,stage_h,1.,1.),(0.,stage_h,0.,1.)] {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos:to_screen(egui::pos2(x,y)),uv:egui::pos2(u,v),color:egui::Color32::WHITE,
+                    });
+                }
+                mesh.indices.extend_from_slice(&[0,1,2,0,2,3]);
+                paper_painter.add(egui::Shape::mesh(mesh));
             }
 
             if let (Some(start), Some(end)) = (self.selection_rect_start, self.selection_rect_current) {
