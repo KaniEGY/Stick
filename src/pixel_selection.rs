@@ -435,6 +435,39 @@ mod tests {
     }
 
     #[test]
+    fn smart_selection_recovers_real_antialiased_circle_edges() {
+        use tiny_skia::{Pixmap,Paint,PathBuilder,Transform,FillRule};
+        let mut source=Pixmap::new(64,64).unwrap();
+        source.fill(tiny_skia::Color::from_rgba8(0,0,255,255));
+        let mut pb=PathBuilder::new();
+        pb.push_circle(32.25,32.25,19.4);
+        let path=pb.finish().unwrap();
+        let mut paint=Paint::default();
+        paint.anti_alias=true;
+        paint.set_color_rgba8(255,0,0,255);
+        source.fill_path(&path,&paint,FillRule::Winding,Transform::identity(),None);
+        let mut old=PixelSelection::empty(64,64).unwrap();
+        old.select_color(source.data(),(32,32),8,EditMode::Replace);
+        let mut smart=PixelSelection::empty(64,64).unwrap();
+        smart.select_smart_color(source.data(),(32,32),8,true);
+        assert!(smart.count()>old.count(),"circle should recover mixed edge pixels");
+        let mut result=source.data().to_vec();
+        smart.paint_color(&mut result,[0,255,0,255]);
+        let mut recovered=0;
+        for (i,p) in source.data().chunks_exact(4).enumerate() {
+            let q=&result[i*4..i*4+4];
+            if p[0]==0 { assert_eq!(q,p,"solid blue contour must stay unchanged"); }
+            if p[0]>0 && p[2]>0 && !old.selected[i] && smart.selected[i] {
+                assert!(q[0]<=2,"recovered edge must not retain red");
+                assert!(q[1].abs_diff(p[0])<=2);
+                assert!(q[2].abs_diff(p[2])<=2);
+                recovered+=1;
+            }
+        }
+        assert!(recovered>20);
+    }
+
+    #[test]
     fn smart_selection_does_not_bridge_a_solid_one_pixel_outline() {
         let rgba=[255,0,0,255, 0,0,255,255, 255,0,0,255, 0,255,0,255];
         let mut s=PixelSelection::empty(4,1).unwrap();
