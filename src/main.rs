@@ -18,6 +18,7 @@ mod fill_render;
 mod eraser_tools;
 mod selection_tools;
 mod pixel_selection;
+mod raster_patch;
 mod layer_ops;
 mod canvas_sizes;
 mod canvas_appearance;
@@ -2027,6 +2028,9 @@ struct StickApp {
     pixel_selection: Option<pixel_selection::PixelSelection>,
     pixel_selection_preview: Option<egui::TextureHandle>,
     pixel_selection_context: Option<(usize,usize,u32,u32)>,
+    pixel_drag_origin: Option<egui::Pos2>,
+    pixel_drag_end: Option<egui::Pos2>,
+    bucket_vector: bool,
     selected_text_item_index: Option<usize>,
     selected_media_idx: Option<usize>,
     selection_rect_start: Option<egui::Pos2>,
@@ -2252,6 +2256,9 @@ impl StickApp {
             pixel_selection: None,
             pixel_selection_preview: None,
             pixel_selection_context: None,
+            pixel_drag_origin: None,
+            pixel_drag_end: None,
+            bucket_vector: true,
             selected_text_item_index: None,
             selected_media_idx: None,
             selection_rect_start: None,
@@ -3193,6 +3200,8 @@ impl StickApp {
         self.pixel_selection = None;
         self.pixel_selection_preview = None;
         self.pixel_selection_context = None;
+        self.pixel_drag_origin=None;
+        self.pixel_drag_end=None;
         self.selected_stroke_indices.clear();
         self.selected_vector_node = None;
         self.selected_vector_nodes.clear();
@@ -3239,6 +3248,78 @@ impl StickApp {
             self.pixel_selection_preview = Some(ctx.load_texture(
                 "pixel selection mask",egui::ColorImage::from_rgba_unmultiplied([w,h],&rgba),
                 egui::TextureOptions::NEAREST));
+        }
+    }
+
+    fn pixel_mask_contains(&self,p:egui::Pos2)->bool {
+        p.x>=0. && p.y>=0. && self.pixel_selection.as_ref().is_some_and(|m|
+            m.contains(p.x.floor() as u32,p.y.floor() as u32))
+    }
+
+    fn move_pixel_selection(&mut self,dx:i32,dy:i32,ctx:&egui::Context) {
+        if (dx==0 && dy==0) || self.is_active_layer_locked() {return;}
+        let Some(mask)=self.pixel_selection.as_ref() else {return;};
+        let (w,h)=(self.project.width,self.project.height);
+        let Some(layer)=self.project.layers.get(self.active_layer_idx) else {return;};
+        let frame=self.project.evaluate_layer_at_frame(layer,self.current_frame);
+        // Preserve untouched objects; only strokes partially intersecting the
+        // pixel mask become raster patches. Fully selected objects remain editable.
+        let mut output=Vec::with_capacity(frame.strokes.len());
+        let mut moved=Vec::new();
+        for s in frame.strokes {
+            let Some((mut selected,origin))=raster_patch::rasterize(&s,w,h) else {output.push(s);continue;};
+            let size=(selected.width(),selected.height());
+            let mut rest=selected.clone();
+            mask.clip_crop(selected.data_mut(),origin,size,false);
+            if !selected.data().chunks_exact(4).any(|p|p[3]>0) {output.push(s);continue;}
+            mask.clip_crop(rest.data_mut(),origin,size,true);
+            let mut piece=if !rest.data().chunks_exact(4).any(|p|p[3]>0) {
+                s
+            } else {
+                let Some(rest_piece)=raster_patch::from_pixmap(&rest,origin) else {return;};
+                let Some(selected_piece)=raster_patch::from_pixmap(&selected,origin) else {return;};
+                output.push(rest_piece);
+                selected_piece
+            };
+            for p in &mut piece.points {p.x+=dx as f32;p.y+=dy as f32;}
+            moved.push(piece);
+        }
+        if !moved.is_empty() {
+            output.extend(moved);
+            self.save_undo_state();
+            self.ensure_editable_keyframe();
+            if let Some(frame)=self.project.layers.get_mut(self.active_layer_idx)
+                .and_then(|l|l.keyframes.get_mut(&self.current_frame)) {
+                frame.strokes=output; self.has_unsaved_changes=true;
+            }
+        }
+        if let Some(mask)=self.pixel_selection.as_mut() {mask.translate_mask(dx,dy);}
+        self.refresh_pixel_selection_preview(ctx);
+    }
+
+    fn raster_bucket_fill(&mut self,seed:egui::Pos2) {
+        let (w,h)=(self.project.width,self.project.height);
+        if seed.x<0. || seed.y<0. || seed.x>=w as f32 || seed.y>=h as f32 {return;}
+        let Some(mut region)=pixel_selection::PixelSelection::empty(w,h) else {
+            self.status_message=tr(self.config.lang,"Canvas too large for raster fill","الكانفا كبيرة على التعبئة الراستر");return;
+        };
+        let mut reference=self.project.clone();
+        for (index,layer) in reference.layers.iter_mut().enumerate() {
+            if self.bucket_reference_only {layer.visible &= layer.is_reference;}
+            else if !self.bucket_reference_all_layers {layer.visible &= index==self.active_layer_idx;}
+        }
+        let image=exporter::render_frame_pixmap(&reference,self.current_frame,
+            reference.background_transparent,reference.background_color);
+        if !region.select_connected_color(image.data(),(seed.x.floor() as u32,seed.y.floor() as u32),12) {return;}
+        if let Some(mask)=self.pixel_selection.as_ref() {region.intersect(mask);}
+        let Some(mut paint)=tiny_skia::Pixmap::new(w,h) else {return;};
+        region.paint_color(paint.data_mut(),self.brush_color);
+        let Some(patch)=raster_patch::from_pixmap(&paint,(0,0)) else {return;};
+        self.save_undo_state();
+        self.ensure_editable_keyframe();
+        if let Some(frame)=self.project.layers.get_mut(self.active_layer_idx)
+            .and_then(|l|l.keyframes.get_mut(&self.current_frame)) {
+            frame.strokes.push(patch);self.has_unsaved_changes=true;
         }
     }
 
@@ -4118,7 +4199,12 @@ impl StickApp {
                 return;
             }
         }
-        let strokes_to_add=self.symmetry_strokes(stroke);
+        let mut strokes_to_add=self.symmetry_strokes(stroke);
+        if let Some(mask)=self.pixel_selection.as_ref() {
+            strokes_to_add=strokes_to_add.iter().filter_map(|s|
+                raster_patch::clipped(s,self.project.width,self.project.height,mask)).collect();
+            if strokes_to_add.is_empty() {self.undo_stack.pop();return;}
+        }
         self.ensure_editable_keyframe();
         if let Some(layer) = self.project.layers.get_mut(self.active_layer_idx) {
             layer.keyframes.entry(self.current_frame).or_default().strokes.extend(strokes_to_add);
@@ -6085,6 +6171,10 @@ impl StickApp {
             }
             ActiveToolUI::Bucket => {
                 ui.strong(tr(lang, "Paint Bucket • Bounded Regions", "الدلو • تلوين المساحات المقفولة"));
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.bucket_vector,true,"Vector");
+                    ui.selectable_value(&mut self.bucket_vector,false,"Raster");
+                });
                 ui.color_edit_button_srgba_unmultiplied(&mut self.brush_color);
                 ui.add(egui::Slider::new(&mut self.bucket_gap_close, 0.0..=12.0)
                     .text(tr(lang, "Close small gaps", "قفل الفجوات الصغيرة")));
@@ -10482,7 +10572,8 @@ impl eframe::App for StickApp {
                         if let Some(action)=canvas_quick_menu::show(
                             ctx,menu,&["／","○","□","▭","△","⬠"],&colors,
                             selected_shape,self.shape_vector_outline,self.brush_color,
-                            &tr(lang,"CUSTOM","مخصص")
+                            &tr(lang,"CUSTOM","مخصص"),
+                            (self.active_tool_ui==ActiveToolUI::Bucket).then_some(self.bucket_vector)
                         ) {
                             match action {
                                 canvas_quick_menu::QuickMenuAction::Shape(index)=>{
@@ -10505,6 +10596,10 @@ impl eframe::App for StickApp {
                                     self.brush_color=color;
                                     self.play_sfx(SfxType::UiClick);
                                     self.canvas_quick_menu=None;
+                                }
+                                canvas_quick_menu::QuickMenuAction::ToggleBucketVector=>{
+                                    self.bucket_vector=!self.bucket_vector;
+                                    self.play_sfx(SfxType::UiClick);
                                 }
                                 canvas_quick_menu::QuickMenuAction::CustomColor=>{
                                     self.show_quick_custom_color=true;
@@ -10899,6 +10994,9 @@ impl eframe::App for StickApp {
                                     .unwrap_or(stage_pos);
                                 self.shape_drag_current=Some(current);
                             }
+                        }
+                        ActiveToolUI::Bucket if pointer_pressed && (!self.bucket_vector || self.pixel_selection.is_some()) => {
+                            self.raster_bucket_fill(stage_pos);
                         }
                         ActiveToolUI::Bucket if pointer_pressed => {
                             let reference_strokes: Vec<Stroke> = if self.bucket_reference_only {
@@ -11331,6 +11429,14 @@ impl eframe::App for StickApp {
                                 }
                             }
                         }
+                        ActiveToolUI::SelectLasso if self.selection_mode!=0 && pointer_pressed &&
+                            self.pixel_mask_contains(stage_pos) && !ctx.input(|i|i.modifiers.shift || i.modifiers.alt) => {
+                            self.pixel_drag_origin=Some(stage_pos);
+                            self.pixel_drag_end=Some(stage_pos);
+                        }
+                        ActiveToolUI::SelectLasso if self.pixel_drag_origin.is_some() && pointer_down => {
+                            self.pixel_drag_end=Some(stage_pos);
+                        }
                         ActiveToolUI::SelectLasso if self.selection_mode==1 && pointer_pressed => {
                             let (w,h)=(self.project.width,self.project.height);
                             if stage_pos.x>=0.0 && stage_pos.y>=0.0
@@ -11389,6 +11495,10 @@ impl eframe::App for StickApp {
             }
 
             if pointer_released {
+                if let (Some(start),Some(end))=(self.pixel_drag_origin.take(),self.pixel_drag_end.take()) {
+                    let delta=end-start;
+                    self.move_pixel_selection(delta.x.round() as i32,delta.y.round() as i32,ctx);
+                }
                 self.vector_axis_drag=None;
                 if let (Some(start),Some(end))=(
                     self.vector_marquee_start.take(),self.vector_marquee_current.take()){
@@ -11862,6 +11972,12 @@ impl eframe::App for StickApp {
             }
             if let Some(stroke) = &self.current_stroke {
                 for preview in self.symmetry_strokes(stroke.clone()) {
+                    if let Some(mask)=self.pixel_selection.as_ref() {
+                        if let Some(patch)=raster_patch::clipped(&preview,self.project.width,self.project.height,mask) {
+                            draw_stroke_pro(&painter,&patch,None,1.0,scale,0.0,0.0,&to_screen);
+                        }
+                        continue;
+                    }
                     if !preview.is_vector
                         && preview.brush_preset == KritaBrushPreset::ChiselMarker
                     {
