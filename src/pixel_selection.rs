@@ -101,6 +101,39 @@ impl PixelSelection {
         true
     }
 
+    /// Four-connected color flood, unlike the global magic wand.
+    pub fn select_connected_color(&mut self, rgba:&[u8], seed:(u32,u32), tolerance:u8)->bool {
+        if !self.valid_pixels(rgba) {return false;}
+        let Some(start)=self.index(seed.0,seed.1) else {return false;};
+        let reference=straight_rgba(&rgba[start*4..start*4+4]);
+        self.clear();
+        let mut visited=vec![false;self.selected.len()];
+        let mut queue=std::collections::VecDeque::new();
+        queue.push_back(start);
+        visited[start]=true;
+        let w=self.width as usize; let h=self.height as usize;
+        while let Some(i)=queue.pop_front() {
+            let candidate=straight_rgba(&rgba[i*4..i*4+4]);
+            if reference[3]==0 {
+                if candidate[3]!=0 {continue;}
+            } else if candidate[3]==0 || !candidate.iter().zip(reference).all(|(&a,b)|a.abs_diff(b)<=tolerance) {
+                continue;
+            }
+            self.selected[i]=true;
+            let x=i%w; let y=i/w;
+            for next in [(x>0).then(||i-1),(x+1<w).then(||i+1),(y>0).then(||i-w),(y+1<h).then(||i+w)].into_iter().flatten() {
+                if !visited[next] {visited[next]=true;queue.push_back(next);}
+            }
+        }
+        true
+    }
+
+    pub fn intersect(&mut self, other:&Self) -> bool {
+        if self.width!=other.width || self.height!=other.height {return false;}
+        for (a,&b) in self.selected.iter_mut().zip(&other.selected) {*a &= b;}
+        true
+    }
+
     /// Manual polygon selection using even-odd scan conversion of pixel
     /// centers. Supports concave and self-crossing polygons without filling
     /// their bounding rectangles. Add and Subtract refine the existing mask.
@@ -246,6 +279,15 @@ mod tests {
         assert_eq!(s.count(),2);
         assert!(s.contains(0,0) && s.contains(2,0));
         assert!(!s.contains(1,0) && !s.contains(3,0));
+    }
+
+    #[test]
+    fn raster_flood_selects_only_the_connected_island() {
+        let rgba=[255,0,0,255,0,0,255,255,255,0,0,255];
+        let mut s=PixelSelection::empty(3,1).unwrap();
+        assert!(s.select_connected_color(&rgba,(0,0),0));
+        assert_eq!(s.count(),1);
+        assert!(!s.contains(2,0));
     }
 
     #[test]
