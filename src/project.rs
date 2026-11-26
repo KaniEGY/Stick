@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-pub const PROJECT_SCHEMA_VERSION: u32 = 6;
+pub const PROJECT_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum KritaBrushPreset {
@@ -763,6 +763,12 @@ impl AniProject {
                         let mut morphed_strokes = Vec::with_capacity(prev_fd.strokes.len());
                         for (idx, s0) in prev_fd.strokes.iter().enumerate() {
                             if let Some(s1) = next_fd.strokes.get(idx) {
+                                // Bitmap patches cannot be resampled as vector paths.
+                                // Hold the source patch until the next keyframe.
+                                if crate::raster_patch::is_patch(s0) || crate::raster_patch::is_patch(s1) {
+                                    morphed_strokes.push(s0.clone());
+                                    continue;
+                                }
                                 let n = s0.points.len().max(s1.points.len()).clamp(2, 96);
                                 let pts0 = s0.resample_points(n);
                                 let pts1 = s1.resample_points(n);
