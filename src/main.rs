@@ -4003,6 +4003,9 @@ impl StickApp {
             .map_or(filtered, |p| self.snap_drawing_point(egui::pos2(p.x, p.y), filtered));
         self.stabilized_cursor = Some(position);
         let point = StrokePoint { x: position.x, y: position.y, pressure };
+        // Sample in screen-space units at high zoom so short cursor motion
+        // does not wait for a 1.5-world-pixel jump (nearly 7px at 458%).
+        let sample_spacing = (1.5 / self.zoom_level.max(1.0)).max(0.25);
         if let Some(stroke) = &mut self.current_stroke {
             // Marker strokes are rendered from a smoothed centerline and do not
             // benefit from tens of thousands of raw pointer events. Keeping a
@@ -4013,7 +4016,7 @@ impl StickApp {
                 && stroke.brush_preset==KritaBrushPreset::ChiselMarker
             {10_000}else{20_000};
             if stroke.points.len() < point_cap && stroke.points.last()
-                .is_none_or(|p| (p.x - point.x).hypot(p.y - point.y) >= 1.5) {
+                .is_none_or(|p| (p.x - point.x).hypot(p.y - point.y) >= sample_spacing) {
                 stroke.points.push(point);
             }
             return;
@@ -11771,7 +11774,9 @@ impl eframe::App for StickApp {
                 }
             }
             if show_dot {
-                if let Some(p) = pointer_pos {
+                // Display feedback at the newest hardware pointer position,
+                // not the stabilized ink endpoint or an earlier contact event.
+                if let Some(p) = ctx.input(|i| i.pointer.latest_pos()).or(pointer_pos) {
                     let active_size = self.active_sizable_tool_size()
                         .unwrap_or(self.brush_size);
                     let radius = ((if self.active_tool_ui == ActiveToolUI::Sculpt {
