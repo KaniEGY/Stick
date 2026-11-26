@@ -307,6 +307,10 @@ fn migrate_step_by_step(mut proj: AniProject, from_schema: u32) -> Result<AniPro
                 // Missing fields are supplied by serde defaults (white background, hidden rig).
                 current = 6;
             }
+            6 => {
+                // Embedded raster patches use the existing optional texture field.
+                current = 7;
+            }
             _ => {
                 return Err(format!("لا يوجد مسار تحويل معروف من الإصدار v{}.", current));
             }

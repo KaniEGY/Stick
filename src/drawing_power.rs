@@ -347,6 +347,7 @@ pub fn puppet_warp(
     let strength=strength.clamp(0.0,1.0); let mut changed=0;
     for &i in selected {
         let Some(s)=strokes.get_mut(i) else{continue};
+        if crate::raster_patch::is_patch(s) {continue;}
         let mut local=false;
         for p in &mut s.points {
             let d=(p.x-pin.0).hypot(p.y-pin.1);

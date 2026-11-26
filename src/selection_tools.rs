@@ -117,6 +117,10 @@ pub fn rotate_points_around(stroke: &mut Stroke, pivot: egui::Pos2, angle_rad: f
 /// bounding rectangle. Especially important for diagonal lines and curves
 /// whose large bounding boxes contain lots of blank canvas.
 pub fn stroke_hit_test(stroke: &Stroke, cursor: egui::Pos2, slop: f32) -> bool {
+    if crate::raster_patch::is_patch(stroke) {
+        return crate::raster_patch::color_at(stroke,cursor.x,cursor.y).is_some()
+            || crate::raster_patch::touches_circle(stroke,(cursor.x,cursor.y),slop.max(0.5));
+    }
     outline_hit_test(stroke, cursor, slop) || (stroke.fill_color.is_some()
         && crate::fill_tools::contour_contains(stroke, cursor.x, cursor.y))
 }
@@ -155,6 +159,10 @@ fn outline_hit_test(stroke: &Stroke, cursor: egui::Pos2, slop: f32) -> bool {
 pub fn pick_color(strokes: &[Stroke], cursor: egui::Pos2, slop: f32) -> Option<[u8;4]> {
     for stroke in strokes.iter().rev() {
         if stroke.opacity <= 0.0 { continue; }
+        if crate::raster_patch::is_patch(stroke) {
+            if let Some(color)=crate::raster_patch::color_at(stroke,cursor.x,cursor.y) {return Some(color);}
+            continue;
+        }
         if stroke.color[3] > 0 && outline_hit_test(stroke, cursor, slop) {
             return Some(stroke.color);
         }

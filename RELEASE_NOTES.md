@@ -1,5 +1,19 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
+## Selection and Raster Bucket / التحديد والتعبئة الراستر
+
+- Selection tool modes: free object selection (blue), global same-color pixel selection (purple), and manual pixel mask (green). Right-click the tool or canvas to switch modes. Deselect is available in the top bar.
+- Manual selection adds to the current mask; hold Alt to subtract. Drag inside the mask to move selected stroke pixels on the active layer.
+- Brush and shape painting under a pixel mask is clipped to the selected region. New masked paint is stored as an embedded raster patch, without external files. Partially selected strokes become raster patches when moved; untouched strokes keep their editable geometry.
+- Bucket radial menu has custom color above and Vector/Raster below. Raster flood uses connected visible pixel colors; Vector retains the existing bounded-contour solver. Under a pixel mask, fill is rasterized to keep its exact edges.
+- Project schema v7 protects embedded raster artwork. Old projects migrate through the existing backup mechanism. Basic Lottie and path-deformation tools do not support raster patches.
+
+- التحديد الحر (أزرق)، الذكي حسب اللون (بنفسجي)، واليدوي (أخضر). التبديل بالكلك يمين وإلغاء التحديد من الشريط العلوي.
+- التحديد اليدوي يضيف للقناع وAlt يحذف منه. اسحب داخل القناع لتحريك بكسلات الخطوط في اللير الحالي.
+- الرسم داخل القناع محفوظ كراستر مضمّن في المشروع، مع الحفاظ على الخطوط غير المعدلة. النصف السفلي من مركز قائمة الدلو للتبديل بين الفيكتور والراستر.
+- تنسيق المشروع v7 يحمي بيانات الراستر؛ المشاريع القديمة قابلة للترقية مع النسخ الاحتياطية. تصدير Lottie الأساسي وأدوات تشويه المسارات لا تدعم رقع الراستر.
+
+
 ## Latest drawing fixes / إصلاحات الرسم الجديدة
 
 - Reduced stabilizer tail lag and made freehand sampling responsive at high zoom.

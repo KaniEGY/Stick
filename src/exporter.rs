@@ -404,7 +404,11 @@ fn fill_skia_stroke_region(
     }
 }
 
-fn draw_skia_stroke(pixmap: &mut Pixmap, s: &crate::project::Stroke, ts: Transform) {
+pub(crate) fn draw_skia_stroke(pixmap: &mut Pixmap, s: &crate::project::Stroke, ts: Transform) {
+    if crate::raster_patch::is_patch(s) {
+        crate::raster_patch::render(pixmap,s,ts);
+        return;
+    }
     use crate::brush_engine::{visit_round_marks, RoundMark};
     let Some(first) = s.points.first() else { return };
     let alpha = (s.color[3] as f32 * s.opacity.clamp(0.0,1.0)) as u8;
@@ -619,6 +623,9 @@ pub fn export_lottie_json(project: &AniProject, out_path: &Path) -> Result<(), S
         let fd = project.evaluate_layer_at_frame(layer, 1);
         let mut shapes = Vec::new();
         for s in &fd.strokes {
+            if crate::raster_patch::is_patch(s) {
+                return Err("This basic Lottie exporter does not support raster artwork. Use PNG or video export.".into());
+            }
             if s.points.len() < 2 {
                 continue;
             }

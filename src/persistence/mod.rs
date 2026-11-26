@@ -193,6 +193,22 @@ mod tests {
     }
 
     #[test]
+    fn embedded_raster_survives_save_reload_and_export() {
+        let mut proj=AniProject::default();
+        proj.width=8;proj.height=8;
+        let mut pix=tiny_skia::Pixmap::new(2,2).unwrap();
+        pix.data_mut()[0..4].copy_from_slice(&[200,50,30,255]);
+        let patch=crate::raster_patch::from_pixmap(&pix,(2,3)).unwrap();
+        proj.layers[0].keyframes.get_mut(&1).unwrap().strokes.push(patch.clone());
+        let bytes=atomic_save::serialize_and_compress_project(&proj).unwrap();
+        let (loaded,_)=decode_and_migrate(sniff_project_bytes(&bytes).unwrap()).unwrap();
+        assert_eq!(loaded.layers[0].keyframes[&1].strokes[0],patch);
+        let rendered=crate::exporter::render_frame_pixmap(&loaded,1,true,[0;4]);
+        let i=(3*8+2)*4;
+        assert_eq!(&rendered.data()[i..i+4],&[200,50,30,255]);
+    }
+
+    #[test]
     fn cmp_004_and_008_atomic_save_and_reload_roundtrip() {
         let tmp_dir = std::env::temp_dir().join(format!("stick_test_{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp_dir);

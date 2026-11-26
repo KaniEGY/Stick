@@ -31,6 +31,7 @@ fn outside(p:&StrokePoint,c:(f32,f32),radius_sq:f32)->bool {
     (p.x-c.0).powi(2)+(p.y-c.1).powi(2)>radius_sq
 }
 fn stroke_touched(s:&Stroke,c:(f32,f32),radius:f32)->bool {
+    if crate::raster_patch::is_patch(s) {return crate::raster_patch::touches_circle(s,c,radius);}
     if s.points.is_empty() { return false; }
     if s.fill_color.is_some() && contour_contains(s,c.0,c.1) {return true;}
     let hit=radius.max(0.0)+(s.base_width.abs()*0.5);
@@ -124,7 +125,11 @@ pub fn erase_partial(strokes:&mut Vec<Stroke>,center:(f32,f32),radius:f32)->bool
     let mut changed=false;
     let mut output=Vec::with_capacity(strokes.len());
     for s in strokes.drain(..) {
-        if stroke_touched(&s,center,radius) {
+        if crate::raster_patch::is_patch(&s) {
+            let (piece,edited)=crate::raster_patch::erase_circle(s,center,radius);
+            changed|=edited;
+            if let Some(piece)=piece {output.push(piece);}
+        } else if stroke_touched(&s,center,radius) {
             changed=true;
             output.extend(split_stroke(s,center,radius));
         } else {
