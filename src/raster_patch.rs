@@ -58,7 +58,7 @@ pub fn render(p:&mut Pixmap,s:&Stroke,ts:Transform) {
     let [a,b,_,d,..]=s.points.as_slice() else {return;};
     let w=img.width() as f32; let h=img.height() as f32;
     let transform=Transform::from_row((b.x-a.x)/w,(b.y-a.y)/w,(d.x-a.x)/h,(d.y-a.y)/h,a.x,a.y).post_concat(ts);
-    let paint=PixmapPaint{opacity:s.opacity.clamp(0.,1.),quality:FilterQuality::Nearest,..Default::default()};
+    let paint=PixmapPaint{opacity:s.opacity.clamp(0.,1.),quality:FilterQuality::Bilinear,..Default::default()};
     p.draw_pixmap(0,0,img.as_ref(),&paint,transform,None);
 }
 
@@ -70,7 +70,7 @@ pub fn preview<F:Fn(egui::Pos2)->egui::Pos2>(painter:&egui::Painter,s:&Stroke,op
     let cached=ctx.data(|data|data.get_temp::<egui::TextureHandle>(key));
     let texture=if let Some(t)=cached {t} else {
         let Some(pix)=decode(s) else {return;};
-        let tex=ctx.load_texture("embedded raster",pixmap_preview_image(&pix),egui::TextureOptions::NEAREST);
+        let tex=ctx.load_texture("embedded raster",pixmap_preview_image(&pix),egui::TextureOptions::LINEAR);
         ctx.data_mut(|data|data.insert_temp(key,tex.clone())); tex
     };
     let mut mesh=egui::Mesh::with_texture(texture.id());
@@ -89,15 +89,15 @@ pub fn preview_clipped<F:Fn(egui::Pos2)->egui::Pos2>(
 ) {
     let Some((mut pix,origin))=rasterize(s,w,h) else {return;};
     let size=(pix.width(),pix.height());
-    if !mask.clip_crop(pix.data_mut(),origin,size,false) {return;}
+    if !mask.clip_brush_crop(pix.data_mut(),origin,size) {return;}
     let ctx=painter.ctx();
     let key=egui::Id::new(("stick_clipped_live_preview",slot));
     let color_image=pixmap_preview_image(&pix);
     let old=ctx.data(|d|d.get_temp::<egui::TextureHandle>(key));
     let tex=if let Some(mut tex)=old {
-        tex.set(color_image,egui::TextureOptions::NEAREST);tex
+        tex.set(color_image,egui::TextureOptions::LINEAR);tex
     } else {
-        ctx.load_texture("clipped live brush",color_image,egui::TextureOptions::NEAREST)
+        ctx.load_texture("clipped live brush",color_image,egui::TextureOptions::LINEAR)
     };
     ctx.data_mut(|d|d.insert_temp(key,tex.clone()));
     let (x,y)=(origin.0 as f32,origin.1 as f32);
@@ -213,7 +213,7 @@ pub fn rasterize(s:&Stroke,w:u32,h:u32)->Option<(Pixmap,(u32,u32))> {
 pub fn clipped(s:&Stroke,w:u32,h:u32,mask:&crate::pixel_selection::PixelSelection)->Option<Stroke> {
     let (mut pix,origin)=rasterize(s,w,h)?;
     let size=(pix.width(),pix.height());
-    if !mask.clip_crop(pix.data_mut(),origin,size,false) {return None;}
+    if !mask.clip_brush_crop(pix.data_mut(),origin,size) {return None;}
     from_pixmap(&pix,origin)
 }
 
@@ -232,6 +232,24 @@ mod tests {
         let pix=decode(&s).unwrap();
         assert_eq!(&pix.data()[..4],&[0,0,0,0]);
         assert_eq!(&pix.data()[4..8],&[100,0,0,255]);
+    }
+
+    #[test]
+    fn smart_clipped_paint_preserves_antialiased_boundary_in_saved_patch() {
+        let rgba=[255,0,0,255,128,0,127,255,0,0,255,255];
+        let mut mask=crate::pixel_selection::PixelSelection::empty(3,1).unwrap();
+        mask.select_smart_color(&rgba,(0,0),8,true);
+        let mut paint=Pixmap::new(3,1).unwrap();
+        paint.fill(tiny_skia::Color::from_rgba8(0,255,0,255));
+        assert!(mask.clip_brush_crop(paint.data_mut(),(0,0),(3,1)));
+        let patch=from_pixmap(&paint,(0,0)).unwrap();
+        let decoded=decode(&patch).unwrap();
+        assert_eq!(decoded.width(),2);
+        assert_eq!(&decoded.data()[4..8],&[0,128,127,255]);
+        let mut result=Pixmap::new(3,1).unwrap();
+        result.data_mut().copy_from_slice(&rgba);
+        render(&mut result,&patch,Transform::identity());
+        assert_eq!(result.data(),&[0,255,0,255,0,128,127,255,0,0,255,255]);
     }
 
     #[test]
