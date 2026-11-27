@@ -5002,6 +5002,7 @@ impl StickApp {
                 y: (self.project.height as f32-height)*0.5,
                 width, height, rotation_deg: 0.0, flip_h: false, flip_v: false });
             kf.insert(self.current_frame, fd);
+            self.commit_timeline_duration(self.current_frame);
             self.project.layers.insert(0, Layer { name: format!("Img_{}", img_name), visible: true, locked: false, is_guide: false, is_pose_rig: false, background: None, is_reference: false, xp_first_paint_rewarded: false, opacity: 1.0, effect: LayerEffectPreset::None, keyframes: kf });
             self.active_layer_idx = 0;
             self.clear_cel_selection();
@@ -6829,7 +6830,7 @@ impl eframe::App for StickApp {
                     self.is_playing = !self.is_playing;
                     if self.is_playing { self.start_audio_playback(); } else { self.stop_audio_playback(); }
                 }
-                if sc_prev && self.current_frame > 1 { self.current_frame -= 1; }
+                if sc_prev && self.current_frame > 1 { self.seek_timeline(self.active_layer_idx, self.current_frame - 1); }
                 if sc_next && self.current_frame < self.timeline_length.max(30) { self.seek_timeline(self.active_layer_idx, self.current_frame + 1); }
             }
 
@@ -9477,11 +9478,11 @@ impl eframe::App for StickApp {
                         self.show_timeline_settings = true;
                     }
                     ui.separator();
-                    if ui.button("⏮").on_hover_text(tr(lang, "First frame", "أول فريم")).clicked() { self.current_frame = 1; }
+                    if ui.button("⏮").on_hover_text(tr(lang, "First frame", "أول فريم")).clicked() { self.seek_timeline(self.active_layer_idx, 1); }
                     if ui.button("⏭").on_hover_text(tr(lang, "Last frame", "آخر فريم")).clicked() {
-                        self.current_frame = self.timeline_length.max(1);
+                        self.seek_timeline(self.active_layer_idx, self.timeline_length.max(1));
                     }
-                    if ui.button("◀").on_hover_text(tr(lang, "Previous frame", "الفريم السابق")).clicked() && self.current_frame > 1 { self.current_frame -= 1; }
+                    if ui.button("◀").on_hover_text(tr(lang, "Previous frame", "الفريم السابق")).clicked() && self.current_frame > 1 { self.seek_timeline(self.active_layer_idx, self.current_frame - 1); }
                     let play_button = egui::Button::new(if self.is_playing { "Ⅱ  PAUSE" } else { "▶  PLAY" })
                         .fill(if self.is_playing { egui::Color32::from_rgb(163, 59, 62) }
                             else { egui::Color32::from_rgb(21, 133, 111) });
@@ -9494,7 +9495,7 @@ impl eframe::App for StickApp {
                     ui.toggle_value(&mut self.loop_enabled, tr(lang, "🔁 Loop Range", "🔁 تكرار جزء"));
                     ui.label(egui::RichText::new(format!("Frame {} / {}", self.current_frame, self.timeline_length))
                         .color(egui::Color32::from_rgb(255, 214, 110)).strong());
-                    if ui.add_enabled(self.timeline_length>1,
+                    if ui.add_enabled(self.timeline_length>1 && self.current_frame <= self.timeline_length,
                         egui::Button::new(tr(lang, "− Frame (F4)", "− حذف فريم (F4)"))).clicked() {
                         let _=self.edit_timeline_frame(self.active_layer_idx,self.current_frame,
                             timeline_ops::FrameAction::DeleteFrame);
@@ -9878,6 +9879,11 @@ impl eframe::App for StickApp {
                                         ui.separator();
                                         ui.small(tr(lang, "Frame operations — this layer", "عمليات الفريم — الطبقة الحالية"));
                                         let can_insert = !is_locked && self.timeline_length < timeline_ops::MAX_TIMELINE_FRAMES;
+                                        if ui.add_enabled(can_insert, egui::Button::new(
+                                            tr(lang, "Extend exposure", "مد الفريم"))).clicked() {
+                                            frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::ExtendHold));
+                                            ui.close_menu();
+                                        }
                                         if ui.add_enabled(can_insert, egui::Button::new(
                                             tr(lang, "Duplicate frame after", "تكرار الفريم بعد الحالي"))).clicked() {
                                             frame_menu_action = Some((l_idx, f, timeline_ops::FrameAction::Duplicate));
