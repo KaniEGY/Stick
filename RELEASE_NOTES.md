@@ -1,5 +1,15 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
+## Timeline exposure extension / تمديد الفريم
+
+- Add an **Extend frame** button beside Delete Frame in the animation timeline. It adds one exposure of the currently visible drawing after the playhead and shifts later keyframes forward on the active layer.
+- The default shortcut is **F3**. It can be rebound under **Settings → Keyboard Shortcuts**, and the toolbar always displays the active binding.
+- The operation uses the existing undoable timeline insertion engine; locked layers and the frame limit are respected. Other layers and audio keep their original absolute frame positions.
+
+- إضافة زر **مد الفريم** بجوار حذف الفريم في شريط التايم لاين.
+- بيضيف فريم بنفس الرسمة الحالية بعد مؤشر التشغيل، وبيزحزح الفريمات التالية في اللير النشط من غير ما يغيّر توقيت الليرات التانية أو الصوت.
+- الاختصار الافتراضي **F3**، وتقدر تغيّره من **الإعدادات ← اختصارات الكيبورد**. الزر بيعرض الاختصار الحالي، والعملية قابلة للتراجع وتحترم قفل اللير وحدّ الفريمات.
+
 ## Smart selection edge refinement / تحسين حواف التحديد الذكي
 
 - Recover anti-aliased mixed-color edge pixels using local contrast and color coverage, rather than blindly expanding the selection across solid outlines.
