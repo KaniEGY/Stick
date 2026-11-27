@@ -545,22 +545,22 @@ struct PreparedBrushGeometry {
     lines: Vec<(u32, Vec<(f32, f32)>)>,
 }
 
-fn centerline_for_width(stroke: &Stroke, width: f32) -> Vec<(f32, f32)> {
+fn map_centerline<T>(stroke: &Stroke, width: f32, mut map: impl FnMut(f32, f32) -> T) -> Vec<T> {
     if stroke.is_vector || stroke.brush_preset == KritaBrushPreset::Fineliner {
         let mut path = crate::vector_path::vector_centerline(stroke);
         if stroke.tip_shape == BrushTipShape::Square {
             crate::vector_path::extend_square_caps(&mut path, width);
         }
-        path
+        path.into_iter().map(|(x,y)| map(x,y)).collect()
     } else if stroke.brush_preset == KritaBrushPreset::GPenInk {
         crate::brush_engine::smooth_krita_2d_points(&stroke.points, width)
-            .into_iter().map(|p| (p.x,p.y)).collect()
+            .into_iter().map(|p| map(p.x,p.y)).collect()
     } else if stroke.brush_preset == KritaBrushPreset::SmoothInk {
         crate::brush_engine::smooth_ink_points(&stroke.points, width)
-            .into_iter().map(|p| (p.x,p.y)).collect()
+            .into_iter().map(|p| map(p.x,p.y)).collect()
     } else {
         crate::brush_engine::smooth_freehand_points(&stroke.points, width)
-            .into_iter().map(|p| (p.x,p.y)).collect()
+            .into_iter().map(|p| map(p.x,p.y)).collect()
     }
 }
 
@@ -572,7 +572,7 @@ impl PreparedBrushGeometry {
             if let RoundMark::Line { width } = &mark {
                 let bits = width.to_bits();
                 if !lines.iter().any(|(key, _)| *key == bits) {
-                    lines.push((bits, centerline_for_width(stroke, *width)));
+                    lines.push((bits, map_centerline(stroke, *width, |x,y| (x,y))));
                 }
             }
             marks.push((mark, flow));
@@ -786,7 +786,7 @@ fn draw_stroke_impl<F: Fn(egui::Pos2) -> egui::Pos2>(
             if let Some(points) = prepared.as_ref().and_then(|p| p.line(width)) {
                 points.iter().map(|&(x,y)| screen(x,y)).collect()
             } else {
-                centerline_for_width(stroke, width).into_iter().map(|(x,y)| screen(x,y)).collect()
+                map_centerline(stroke, width, screen)
             }
         };
         let points = if flow == 1.0 {
@@ -913,6 +913,34 @@ mod viewport_tests {
         s.base_width += 1.0;
         assert!(!Rc::ptr_eq(&moved, &cache.get(&s)));
         assert!(cache.bytes <= GEOMETRY_CACHE_BYTES);
+    }
+
+    #[test]
+    fn cached_canvas_shapes_match_uncached_at_different_zoom_and_color() {
+        for (preset, vector, varied) in [
+            (KritaBrushPreset::GPenInk, false, false),
+            (KritaBrushPreset::GPenInk, false, true),
+            (KritaBrushPreset::Watercolor, false, false),
+            (KritaBrushPreset::SmoothInk, true, false),
+            (KritaBrushPreset::TaperedPen, false, true),
+        ] {
+            let mut s = stroke(&[(20.0,20.0),(45.0,27.0),(63.0,41.0),(82.0,60.0)]);
+            s.brush_preset = preset;
+            s.is_vector = vector;
+            if varied { s.points[1].pressure = 0.4; }
+            for (scale, color) in [(1.0,[10,20,30,255]), (1.5,[80,90,110,120])] {
+                let render = |cached: bool| {
+                    let ctx = egui::Context::default();
+                    let out = ctx.run(egui::RawInput::default(), |ctx| {
+                        let painter = ctx.layer_painter(egui::LayerId::background());
+                        let transform = |p: egui::Pos2| egui::pos2(p.x*scale+20.0,p.y*scale+10.0);
+                        draw_stroke_impl(&painter, &s, Some(color), 0.7, scale, 0.0, 0.0, &transform, cached);
+                    });
+                    format!("{:?}", out.shapes)
+                };
+                assert_eq!(render(false), render(true), "{preset:?}");
+            }
+        }
     }
 
     #[test]
