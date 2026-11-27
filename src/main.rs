@@ -763,6 +763,8 @@ struct AppConfig {
     opacity_gesture_key: String,
     #[serde(default = "default_del_frame_key")]
     delete_frame_key: String,
+    #[serde(default = "default_extend_frame_key")]
+    extend_frame_key: String,
     insert_keyframe: String,
     insert_blank_kf: String,
     convert_symbol: String,
@@ -872,6 +874,7 @@ fn default_text_key() -> String { "N".to_string() }
 fn default_shape_key() -> String { "U".to_string() }
 fn default_hand_key() -> String { "H".to_string() }
 fn default_del_frame_key() -> String { "F4".to_string() }
+fn default_extend_frame_key() -> String { "F3".to_string() }
 
 fn vector_density_from_tolerance(tolerance:f32)->f32 {
     let t=tolerance.clamp(0.4,8.0);
@@ -960,6 +963,7 @@ impl Default for AppConfig {
             size_gesture_key: default_size_gesture_key(),
             opacity_gesture_key: default_opacity_gesture_key(),
             delete_frame_key: "F4".to_string(),
+            extend_frame_key: default_extend_frame_key(),
             insert_keyframe: "F6".to_string(),
             insert_blank_kf: "F7".to_string(),
             convert_symbol: "F8".to_string(),
@@ -4484,6 +4488,14 @@ impl StickApp {
         self.record_frame_drawn_activity(now_time);
     }
 
+    fn extend_current_frame(&mut self) -> bool {
+        self.edit_timeline_frame(
+            self.active_layer_idx,
+            self.current_frame,
+            timeline_ops::FrameAction::Duplicate,
+        )
+    }
+
     fn copy_frame(&mut self, layer_idx: usize, frame_idx: usize) {
         if !(1..=self.project.total_frames).contains(&frame_idx) { return; }
         if let Some(layer) = self.project.layers.get(layer_idx) {
@@ -6591,7 +6603,7 @@ impl eframe::App for StickApp {
             scroll_y, close_req, pointer_down, pointer_pressed, pointer_released, pointer_pos, primary_press_pos,
             sc_select, sc_lasso, sc_free_tr, sc_vec_sel, sc_vec_eraser, sc_sculpt, sc_puppet,
             sc_pen, sc_brush, sc_eraser, sc_eraser_partial,
-            sc_bucket, sc_eyedropper, sc_text, sc_shape, sc_hand, sc_del_frame, sc_f6, sc_f7, sc_f8,
+            sc_bucket, sc_eyedropper, sc_text, sc_shape, sc_hand, sc_del_frame, sc_extend_frame, sc_f6, sc_f7, sc_f8,
             sc_play, sc_prev, sc_next, sc_smaller, sc_larger, sc_reset_canvas,
             sc_flip_canvas_h, sc_flip_canvas_v, pressed_key_name,
         ) = ctx.input(|i| {
@@ -6651,6 +6663,7 @@ impl eframe::App for StickApp {
                 is_shortcut_pressed(i, &self.config.tool_shape),
                 is_shortcut_pressed(i, &self.config.tool_hand),
                 is_shortcut_pressed(i, &self.config.delete_frame_key),
+                is_shortcut_pressed(i, &self.config.extend_frame_key),
                 is_shortcut_pressed(i, &self.config.insert_keyframe),
                 is_shortcut_pressed(i, &self.config.insert_blank_kf),
                 is_shortcut_pressed(i, &self.config.convert_symbol),
@@ -6722,6 +6735,7 @@ impl eframe::App for StickApp {
                 102 => self.config.opacity_gesture_key = k_name,
                 103 => self.config.flip_canvas_h_key = k_name,
                 104 => self.config.flip_canvas_v_key = k_name,
+                105 => self.config.extend_frame_key = k_name,
                 _ => {}
             }
             self.config.save();
@@ -6782,6 +6796,9 @@ impl eframe::App for StickApp {
                     if self.edit_timeline_frame(self.active_layer_idx, self.current_frame, timeline_ops::FrameAction::DeleteFrame) {
                         self.play_sfx(SfxType::EraserRub);
                     }
+                }
+                if sc_extend_frame && self.extend_current_frame() {
+                    self.play_sfx(SfxType::NewFrame);
                 }
                 if sc_f6 { self.insert_next_keyframe(false, now_time); }
                 if sc_f7 { self.insert_next_keyframe(true, now_time); }
@@ -7107,6 +7124,7 @@ impl eframe::App for StickApp {
                             ("Redo", "إعادة", "Ctrl+Y"),
                             ("Command Palette", "لوحة الأوامر", "Ctrl+K"),
                             ("Fullscreen", "ملء الشاشة", "F10"),
+                            ("Extend current frame", "مد الفريم", self.config.extend_frame_key.as_str()),
                             ("Keyframe", "فريم مفتاحي", self.config.insert_keyframe.as_str()),
                             ("Blank Keyframe", "فريم مفتاحي فارغ", self.config.insert_blank_kf.as_str()),
                         ] {
@@ -7358,6 +7376,22 @@ impl eframe::App for StickApp {
                                 });
                             }
                             ui.separator();
+                            ui.strong(tr(lang, "Timeline controls", "اختصارات التايم لاين"));
+                            ui.horizontal(|ui| {
+                                ui.label(tr(lang, "Extend current frame", "مد الفريم"));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let is_listening = self.listening_shortcut_idx == Some(105);
+                                    let caption = if is_listening {
+                                        tr(lang, "Press a key...", "دوس أي زرار...").to_owned()
+                                    } else {
+                                        format!("{}  ✎", self.config.extend_frame_key)
+                                    };
+                                    if ui.button(caption).clicked() {
+                                        self.listening_shortcut_idx = Some(105);
+                                    }
+                                });
+                            });
+                            ui.separator();
                             ui.strong(tr(lang,"Canvas quick controls","اختصارات التحكم السريع"));
                             for (slot,en,ar,key) in [
                                 (100usize,"Quick color wheel","عجلة الألوان السريعة",self.config.quick_color_key.clone()),
@@ -7406,6 +7440,7 @@ impl eframe::App for StickApp {
                             self.config.opacity_gesture_key = d.opacity_gesture_key;
                             self.config.flip_canvas_h_key = d.flip_canvas_h_key;
                             self.config.flip_canvas_v_key = d.flip_canvas_v_key;
+                            self.config.extend_frame_key = d.extend_frame_key;
                             self.listening_shortcut_idx = None;
                             self.config.save();
                         }
@@ -9441,6 +9476,25 @@ impl eframe::App for StickApp {
                         egui::Button::new(tr(lang, "− Frame (F4)", "− حذف فريم (F4)"))).clicked() {
                         let _=self.edit_timeline_frame(self.active_layer_idx,self.current_frame,
                             timeline_ops::FrameAction::DeleteFrame);
+                    }
+                    let can_extend_frame = self.project.total_frames < timeline_ops::MAX_TIMELINE_FRAMES
+                        && self.project.layers.get(self.active_layer_idx).is_some_and(|layer| !layer.locked);
+                    let extend_frame_label = format!(
+                        "↔ {} ({})",
+                        tr(lang, "Extend frame", "مد الفريم"),
+                        self.config.extend_frame_key
+                    );
+                    if ui.add_enabled(can_extend_frame, egui::Button::new(extend_frame_label))
+                        .on_hover_text(tr(
+                            lang,
+                            "Add one exposure after this frame; later keyframes on the active layer move forward.",
+                            "زود فريم بنفس الرسمة بعد الفريم الحالي، والفريمات اللي بعده في نفس اللير تتحرك لقدّام."
+                        ))
+                        .clicked()
+                    {
+                        if self.extend_current_frame() {
+                            self.play_sfx(SfxType::NewFrame);
+                        }
                     }
                     if ui.button(tr(lang, "◆ Keyframe (F6)", "◆ كي فريم (F6)")).clicked() { self.insert_next_keyframe(false, now_time); }
                     if ui.button(tr(lang, "◇ Blank (F7)", "◇ فاضي (F7)")).clicked() { self.insert_next_keyframe(true, now_time); }
@@ -12379,6 +12433,49 @@ mod tool_discovery_tests {
         assert_eq!(c.flip_canvas_h_key,"V");
         assert_eq!(c.flip_canvas_v_key,"F");
         assert_ne!(c.tool_select,c.flip_canvas_h_key);
+    }
+
+    #[test]
+    fn extend_frame_shortcut_defaults_to_f3_and_preserves_custom_bindings() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.extend_frame_key, "F3");
+
+        config.extend_frame_key = "F9".to_string();
+        let saved = serde_json::to_value(&config).unwrap();
+        let restored: AppConfig = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(restored.extend_frame_key, "F9");
+
+        let mut legacy = saved;
+        legacy.as_object_mut().unwrap().remove("extend_frame_key");
+        let migrated: AppConfig = serde_json::from_value(legacy).unwrap();
+        assert_eq!(migrated.extend_frame_key, "F3");
+    }
+
+    #[test]
+    fn extending_current_frame_adds_one_held_exposure_and_pushes_later_keys() {
+        let mut app = StickApp::new(&egui::Context::default());
+        app.config.sound_effects_enabled = false;
+        app.project.total_frames = 3;
+        app.timeline_length = 3;
+        app.current_frame = 1;
+        app.project.layers[0].keyframes.get_mut(&1).unwrap().label = "current".into();
+        app.project.layers[0].keyframes.insert(
+            2,
+            FrameData { label: "next".into(), ..Default::default() },
+        );
+
+        assert!(app.extend_current_frame());
+        assert_eq!(app.project.total_frames, 4);
+        assert_eq!(app.timeline_length, 4);
+        assert_eq!(app.current_frame, 2);
+        assert_eq!(app.project.layers[0].keyframes[&2].label, "current");
+        assert_eq!(app.project.layers[0].keyframes[&3].label, "next");
+
+        app.undo();
+        assert_eq!(app.project.total_frames, 3);
+        assert_eq!(app.timeline_length, 3);
+        assert_eq!(app.current_frame, 1);
+        assert_eq!(app.project.layers[0].keyframes[&2].label, "next");
     }
 
     #[test]
