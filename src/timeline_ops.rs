@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn clipboard_paste_respects_locked_layers_and_document_bounds() {
+    fn clipboard_paste_respects_locks_limits_and_commits_preview_duration() {
         let mut app = crate::StickApp::new(&egui::Context::default());
         app.config.sound_effects_enabled = false;
         app.project.layers[0].keyframes.get_mut(&1).unwrap().label = "copied".into();
@@ -231,10 +231,18 @@ mod tests {
         app.project.layers[0].locked = true;
         app.paste_frame(0, 1);
         app.project.layers[0].locked = false;
-        app.paste_frame(0, 2);
+        app.paste_frame(0, MAX_TIMELINE_FRAMES + 1);
         assert_eq!(app.project.layers[0].keyframes[&1].label, "destination");
         assert_eq!(app.project.layers[0].keyframes.len(), 1);
         assert!(app.undo_stack.is_empty());
+
+        app.paste_frame(0, 11);
+        assert_eq!(app.project.total_frames, 11);
+        assert_eq!(app.project.layers[0].keyframes[&11].label, "copied");
+        assert_eq!(app.project.layers[0].keyframes.len(), 2);
+        app.undo();
+        assert_eq!(app.project.total_frames, 1);
+        assert_eq!(app.project.layers[0].keyframes.len(), 1);
         app.paste_frame(0, 1);
         assert_eq!(app.project.layers[0].keyframes[&1].label, "copied");
         app.undo();
