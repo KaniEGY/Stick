@@ -43,7 +43,7 @@ mod drawing_assets;
 mod pose_guide;
 
 use arabic_reshaper::arabic_reshape;
-use brushes::{draw_brush_preset_icon, draw_marker_live_preview, draw_stroke_pro};
+use brushes::{draw_brush_preset_icon, draw_marker_live_preview, draw_stroke_cached, draw_stroke_pro};
 use stylus::TouchPressureTracker;
 use eframe::egui;
 use exporter::{ImageExportFormat, VideoExportFormat};
@@ -11805,7 +11805,7 @@ impl eframe::App for StickApp {
                 if layer.visible {
                     let l_op = layer.opacity.clamp(0.0, 1.0);
                     if l_op == 0.0 { continue; }
-                    let fd = self.project.evaluate_layer_at_frame(layer, self.current_frame);
+                    let fd = self.project.layer_frame_view(layer, self.current_frame);
                     // Export applies layer opacity once after painting its artwork.
                     // Match that group-opacity behavior on the canvas too.
                     let mut group_preview = false;
@@ -11897,12 +11897,12 @@ impl eframe::App for StickApp {
                     if !group_preview {
                     for s in &fd.strokes {
                         if layer.effect==LayerEffectPreset::None {
-                            draw_stroke_pro(&painter,s,None,l_op,scale,0.0,0.0,&to_screen);
+                            draw_stroke_cached(&painter,s,None,l_op,scale,0.0,0.0,&to_screen);
                         } else {
                             let mut effected=s.clone();
                             effected.color=layer.effect.apply_rgba(effected.color);
                             effected.fill_color=effected.fill_color.map(|c|layer.effect.apply_rgba(c));
-                            draw_stroke_pro(&painter,&effected,None,l_op,scale,0.0,0.0,&to_screen);
+                            draw_stroke_cached(&painter,&effected,None,l_op,scale,0.0,0.0,&to_screen);
                         }
                     }
                     for txt in &fd.text_items {
@@ -11934,13 +11934,13 @@ impl eframe::App for StickApp {
                             };
                             for stroke in self.project.evaluate_symbol_strokes(symbol,self.current_frame) {
                                 if layer.effect==LayerEffectPreset::None {
-                                    draw_stroke_pro(&painter,stroke,None,l_op,scale*instance_scale,
+                                    draw_stroke_cached(&painter,stroke,None,l_op,scale*instance_scale,
                                         0.0,0.0,&symbol_to_screen);
                                 } else {
                                     let mut effected=stroke.clone();
                                     effected.color=layer.effect.apply_rgba(effected.color);
                                     effected.fill_color=effected.fill_color.map(|c|layer.effect.apply_rgba(c));
-                                    draw_stroke_pro(&painter,&effected,None,l_op,scale*instance_scale,
+                                    draw_stroke_cached(&painter,&effected,None,l_op,scale*instance_scale,
                                         0.0,0.0,&symbol_to_screen);
                                 }
                             }
