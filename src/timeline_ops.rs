@@ -16,6 +16,7 @@ pub enum FrameAction {
     Keyframe,
     BlankKeyframe,
     Duplicate,
+    ExtendHold,
     InsertEmpty,
 }
 
@@ -116,7 +117,7 @@ pub fn apply_frame_edit(
     frame: usize,
     action: FrameAction,
 ) -> Result<(), &'static str> {
-    if frame == 0 || frame > project.total_frames {
+    if frame == 0 || (frame > project.total_frames && action != FrameAction::ExtendHold) {
         return Err("Frame is outside the timeline.");
     }
     let layer = project.layers.get(layer_index).ok_or("Layer is missing.")?;
@@ -134,6 +135,22 @@ pub fn apply_frame_edit(
         return Err("This layer is locked.");
     }
     match action {
+        FrameAction::ExtendHold => {
+            // A hold is time, not a cloned FrameData. The preceding authored key
+            // remains the only source for all newly exposed cells.
+            if project.total_frames >= MAX_TIMELINE_FRAMES
+                || frame >= MAX_TIMELINE_FRAMES
+                || layer.keyframes.keys().any(|&key| key >= MAX_TIMELINE_FRAMES)
+            {
+                return Err("The timeline has reached its frame limit.");
+            }
+            let keys = &mut project.layers[layer_index].keyframes;
+            *keys = std::mem::take(keys)
+                .into_iter()
+                .map(|(key, data)| (if key > frame { key + 1 } else { key }, data))
+                .collect();
+            project.total_frames = project.total_frames.max(frame) + 1;
+        }
         FrameAction::Duplicate | FrameAction::InsertEmpty => {
             if project.total_frames >= MAX_TIMELINE_FRAMES
                 || layer
@@ -183,7 +200,7 @@ mod tests {
         app.timeline_length = 3;
         app.current_frame = 2;
         app.project.layers[0].keyframes.get_mut(&1).unwrap().label = "held".into();
-        for action in [FrameAction::Duplicate, FrameAction::InsertEmpty] {
+        for action in [FrameAction::Duplicate, FrameAction::InsertEmpty, FrameAction::ExtendHold] {
             let before = serde_json::to_value(&app.project).unwrap();
             assert!(app.edit_timeline_frame(0, 2, action));
             let after = serde_json::to_value(&app.project).unwrap();
@@ -363,6 +380,43 @@ mod tests {
         p.layers[0].keyframes.get_mut(&3).unwrap().strokes.clear();
         assert_eq!(p.layers[0].keyframes[&1].strokes.len(), 1);
         assert_eq!(serde_json::to_value(&p.layers[1]).unwrap(), unchanged);
+    }
+
+    #[test]
+    fn extend_hold_does_not_clone_and_preserves_other_layers() {
+        let mut p = AniProject::default();
+        p.total_frames = 4;
+        p.layers[0].keyframes.get_mut(&1).unwrap().strokes.push(dab());
+        p.layers[0].keyframes.insert(3, FrameData { label: "next".into(), ..Default::default() });
+        p.layers.push(p.layers[0].clone());
+        let other = serde_json::to_value(&p.layers[1]).unwrap();
+        for at in [1, 2, 3] {
+            apply_frame_edit(&mut p, 0, at, FrameAction::ExtendHold).unwrap();
+        }
+        assert_eq!(p.total_frames, 7);
+        assert_eq!(p.layers[0].keyframes.len(), 2);
+        assert_eq!(p.layers[0].keyframes[&6].label, "next");
+        p.layers[0].keyframes.get_mut(&1).unwrap().strokes.clear();
+        for at in 1..6 {
+            assert!(p.evaluate_layer_at_frame(&p.layers[0], at).strokes.is_empty());
+            assert_eq!(p.layers[0].keyframes.contains_key(&at), at == 1);
+        }
+        assert_eq!(serde_json::to_value(&p.layers[1]).unwrap(), other);
+    }
+
+    #[test]
+    fn extend_hold_from_preview_and_limits_are_safe() {
+        let mut p = AniProject::default();
+        apply_frame_edit(&mut p, 0, 11, FrameAction::ExtendHold).unwrap();
+        assert_eq!(p.total_frames, 12);
+        assert_eq!(p.layers[0].keyframes.len(), 1);
+        let before = serde_json::to_value(&p).unwrap();
+        assert!(apply_frame_edit(&mut p, 0, 0, FrameAction::ExtendHold).is_err());
+        assert!(apply_frame_edit(&mut p, 0, MAX_TIMELINE_FRAMES, FrameAction::ExtendHold).is_err());
+        assert_eq!(serde_json::to_value(&p).unwrap(), before);
+        p.layers[0].locked = true;
+        assert!(apply_frame_edit(&mut p, 0, 1, FrameAction::ExtendHold).is_err());
+        assert_eq!(p.total_frames, 12);
     }
 
     #[test]
