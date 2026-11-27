@@ -3186,7 +3186,7 @@ impl StickApp {
         self.canvas_width_edit = self.project.width;
         self.canvas_height_edit = self.project.height;
         self.timeline_length = snap.timeline_length.max(1);
-        self.current_frame = snap.current_frame.clamp(1, self.timeline_length);
+        self.current_frame = snap.current_frame.clamp(1, timeline_ops::MAX_TIMELINE_FRAMES);
         self.active_layer_idx = snap.active_layer_idx.min(self.project.layers.len().saturating_sub(1));
         self.loop_start_frame = snap.loop_start_frame;
         self.loop_end_frame = snap.loop_end_frame;
@@ -3869,7 +3869,28 @@ impl StickApp {
         Self::get_effective_keyframe_index(layer, frame).and_then(|k| layer.keyframes.get(&k))
     }
 
+    // The visible ruler can extend beyond the authored document. Seeking is
+    // read-only; only editing commands commit a new document duration.
+    fn seek_timeline(&mut self, layer: usize, frame: usize) {
+        if self.project.layers.get(layer).is_none() || !(1..=timeline_ops::MAX_TIMELINE_FRAMES).contains(&frame) {
+            return;
+        }
+        if self.active_layer_idx != layer || self.current_frame != frame {
+            self.clear_cel_selection();
+            self.active_layer_idx = layer;
+            self.current_frame = frame;
+        }
+    }
+
+    fn commit_timeline_duration(&mut self, frame: usize) {
+        self.timeline_length = self.timeline_length.max(frame);
+        self.project.total_frames = self.timeline_length;
+    }
+
     fn ensure_editable_keyframe(&mut self) {
+        if self.project.layers.get(self.active_layer_idx).is_some() {
+            self.commit_timeline_duration(self.current_frame);
+        }
         if let Some(layer) = self.project.layers.get_mut(self.active_layer_idx) {
             if !layer.keyframes.contains_key(&self.current_frame) {
                 let inherited = Self::get_effective_keyframe_index(layer, self.current_frame)
@@ -4492,7 +4513,7 @@ impl StickApp {
         self.edit_timeline_frame(
             self.active_layer_idx,
             self.current_frame,
-            timeline_ops::FrameAction::Duplicate,
+            timeline_ops::FrameAction::ExtendHold,
         )
     }
 
@@ -4515,7 +4536,7 @@ impl StickApp {
     }
 
     fn paste_frame(&mut self, layer_idx: usize, frame_idx: usize) {
-        if !(1..=self.project.total_frames).contains(&frame_idx)
+        if !(1..=timeline_ops::MAX_TIMELINE_FRAMES).contains(&frame_idx)
             || !self.project.layers.get(layer_idx).is_some_and(|layer| !layer.locked)
         {
             return;
@@ -4523,6 +4544,7 @@ impl StickApp {
         if let Some(mut clip) = self.clipboard_frame.clone() {
             clip.timeline_marker = FrameMarkerKind::CopiedPose;
             self.save_undo_state();
+            self.commit_timeline_duration(frame_idx);
             self.project.layers[layer_idx].keyframes.insert(frame_idx, clip);
             self.active_layer_idx = layer_idx;
             self.current_frame = frame_idx;
@@ -4540,7 +4562,7 @@ impl StickApp {
         }
         self.push_undo_snapshot(snapshot);
         self.timeline_length = self.project.total_frames;
-        self.current_frame = if action == timeline_ops::FrameAction::Duplicate {
+        self.current_frame = if matches!(action, timeline_ops::FrameAction::Duplicate | timeline_ops::FrameAction::ExtendHold) {
             frame + 1
         } else {
             frame.min(self.timeline_length)
@@ -6808,7 +6830,7 @@ impl eframe::App for StickApp {
                     if self.is_playing { self.start_audio_playback(); } else { self.stop_audio_playback(); }
                 }
                 if sc_prev && self.current_frame > 1 { self.current_frame -= 1; }
-                if sc_next && self.current_frame < self.timeline_length { self.current_frame += 1; }
+                if sc_next && self.current_frame < self.timeline_length.max(30) { self.seek_timeline(self.active_layer_idx, self.current_frame + 1); }
             }
 
             if sc_reset_canvas { self.pan_offset = egui::Vec2::ZERO; self.zoom_level = 0.75; self.canvas_rotation_deg = 0.0; self.canvas_flip_h = false; self.canvas_flip_v = false; }
@@ -9467,7 +9489,7 @@ impl eframe::App for StickApp {
                         self.is_playing = !self.is_playing;
                         if self.is_playing { self.start_audio_playback(); } else { self.stop_audio_playback(); }
                     }
-                    if ui.button("▶").on_hover_text(tr(lang, "Next frame", "الفريم الجاي")).clicked() && self.current_frame < self.timeline_length { self.current_frame += 1; }
+                    if ui.button("▶").on_hover_text(tr(lang, "Next frame", "الفريم الجاي")).clicked() && self.current_frame < self.timeline_length.max(30) { self.seek_timeline(self.active_layer_idx, self.current_frame + 1); }
                     ui.separator();
                     ui.toggle_value(&mut self.loop_enabled, tr(lang, "🔁 Loop Range", "🔁 تكرار جزء"));
                     ui.label(egui::RichText::new(format!("Frame {} / {}", self.current_frame, self.timeline_length))
@@ -9478,6 +9500,7 @@ impl eframe::App for StickApp {
                             timeline_ops::FrameAction::DeleteFrame);
                     }
                     let can_extend_frame = self.project.total_frames < timeline_ops::MAX_TIMELINE_FRAMES
+                        && self.current_frame < timeline_ops::MAX_TIMELINE_FRAMES
                         && self.project.layers.get(self.active_layer_idx).is_some_and(|layer| !layer.locked);
                     let extend_frame_label = format!(
                         "↔ {} ({})",
@@ -9487,8 +9510,8 @@ impl eframe::App for StickApp {
                     if ui.add_enabled(can_extend_frame, egui::Button::new(extend_frame_label))
                         .on_hover_text(tr(
                             lang,
-                            "Add one exposure after this frame; later keyframes on the active layer move forward.",
-                            "زود فريم بنفس الرسمة بعد الفريم الحالي، والفريمات اللي بعده في نفس اللير تتحرك لقدّام."
+                            "Hold the same drawing for one more frame without creating a keyframe.",
+                            "مد مدة نفس الرسمة فريم واحد من غير إنشاء كي فريم أو نسخة مستقلة."
                         ))
                         .clicked()
                     {
@@ -10276,17 +10299,7 @@ impl eframe::App for StickApp {
             }
         }
         if let Some((layer, frame)) = timeline_seek {
-            if frame > self.timeline_length {
-                self.save_undo_state();
-                self.timeline_length = frame;
-                self.project.total_frames = frame;
-                self.has_unsaved_changes = true;
-            }
-            if self.active_layer_idx != layer || self.current_frame != frame {
-                self.clear_cel_selection();
-                self.active_layer_idx = layer;
-                self.current_frame = frame;
-            }
+            self.seek_timeline(layer, frame);
         }
         if let Some(idx) = timeline_visibility_toggle {
             self.save_undo_state();
@@ -12468,14 +12481,58 @@ mod tool_discovery_tests {
         assert_eq!(app.project.total_frames, 4);
         assert_eq!(app.timeline_length, 4);
         assert_eq!(app.current_frame, 2);
-        assert_eq!(app.project.layers[0].keyframes[&2].label, "current");
+        assert!(!app.project.layers[0].keyframes.contains_key(&2));
+        assert_eq!(app.project.layers[0].keyframes.len(), 2);
         assert_eq!(app.project.layers[0].keyframes[&3].label, "next");
+        assert_eq!(app.project.evaluate_layer_at_frame(&app.project.layers[0], 2).label, "current");
 
         app.undo();
         assert_eq!(app.project.total_frames, 3);
         assert_eq!(app.timeline_length, 3);
         assert_eq!(app.current_frame, 1);
         assert_eq!(app.project.layers[0].keyframes[&2].label, "next");
+    }
+
+    #[test]
+    fn preview_seek_is_read_only_and_edit_commits_only_target_key() {
+        let mut app = StickApp::new(&egui::Context::default());
+        app.config.sound_effects_enabled = false;
+        app.has_unsaved_changes = false;
+        let before = serde_json::to_value(&app.project).unwrap();
+        let history = app.undo_stack.len();
+        app.seek_timeline(0, 11);
+        assert_eq!(app.current_frame, 11);
+        assert_eq!(app.timeline_length, 1);
+        assert_eq!(serde_json::to_value(&app.project).unwrap(), before);
+        assert_eq!(app.undo_stack.len(), history);
+        assert!(!app.has_unsaved_changes);
+
+        app.save_undo_state();
+        app.ensure_editable_keyframe();
+        app.project.layers[0].keyframes.get_mut(&11).unwrap().label = "drawn".into();
+        assert_eq!((app.timeline_length, app.project.total_frames), (11, 11));
+        assert_eq!(app.project.layers[0].keyframes.len(), 2);
+        assert!(app.project.layers[0].keyframes.contains_key(&11));
+        app.undo();
+        assert_eq!(serde_json::to_value(&app.project).unwrap(), before);
+        assert_eq!((app.current_frame, app.timeline_length), (11, 1));
+    }
+
+    #[test]
+    fn f3_hold_and_f6_copy_are_distinct_after_preview_seek() {
+        let mut app = StickApp::new(&egui::Context::default());
+        app.config.sound_effects_enabled = false;
+        app.project.layers[0].keyframes.get_mut(&1).unwrap().label = "original".into();
+        app.seek_timeline(0, 11);
+        assert!(app.extend_current_frame());
+        assert_eq!((app.current_frame, app.timeline_length), (12, 12));
+        assert_eq!(app.project.layers[0].keyframes.len(), 1);
+        app.insert_next_keyframe(false, 0.0);
+        assert_eq!((app.current_frame, app.timeline_length), (13, 13));
+        assert_eq!(app.project.layers[0].keyframes.len(), 2);
+        app.project.layers[0].keyframes.get_mut(&1).unwrap().label = "edited".into();
+        assert_eq!(app.project.evaluate_layer_at_frame(&app.project.layers[0], 12).label, "edited");
+        assert_eq!(app.project.layers[0].keyframes[&13].label, "original");
     }
 
     #[test]
