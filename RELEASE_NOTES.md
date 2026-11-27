@@ -1,13 +1,20 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
+## True frame holds and read-only timeline navigation / تمديد الفريم والتنقل
+
+- **F3** extends the exposure by one frame without copying the drawing or creating a keyframe. Changes to the source drawing appear across its held cells; F6 remains an independent keyframe command. Later keys on the active layer shift forward, with other layers and audio unchanged.
+- Clicking or scrubbing beyond the current duration only moves the playhead; the document grows when drawing, pasting, importing, or explicitly extending/inserting frames, not when navigating.
+- **F3** بيمدّ مدة نفس الرسمة بدون إنشاء نسخة منها، وتعديل الرسمة الأصلية بيظهر على كل الفريمات التابعة ليها. **F6** لسه بينشئ كي فريم مستقل.
+- التنقل لحد فريم بعيد مش بيغيّر مدة المشروع ولا بينشئ فريمات؛ التمديد بيحصل عند الرسم أو تنفيذ أمر تعديل فعلي.
+
 ## Timeline exposure extension / تمديد الفريم
 
-- Add an **Extend frame** button beside Delete Frame in the animation timeline. It adds one exposure of the currently visible drawing after the playhead and shifts later keyframes forward on the active layer.
+- Add an **Extend frame** button beside Delete Frame in the animation timeline. It holds the source drawing for an additional frame without cloning it and shifts later keyframes forward on the active layer.
 - The default shortcut is **F3**. It can be rebound under **Settings → Keyboard Shortcuts**, and the toolbar always displays the active binding.
 - The operation uses the existing undoable timeline insertion engine; locked layers and the frame limit are respected. Other layers and audio keep their original absolute frame positions.
 
 - إضافة زر **مد الفريم** بجوار حذف الفريم في شريط التايم لاين.
-- بيضيف فريم بنفس الرسمة الحالية بعد مؤشر التشغيل، وبيزحزح الفريمات التالية في اللير النشط من غير ما يغيّر توقيت الليرات التانية أو الصوت.
+- بيمدّ نفس الرسمة الحالية من غير نسخ بعد مؤشر التشغيل، وبيزحزح الفريمات التالية في اللير النشط من غير ما يغيّر توقيت الليرات التانية أو الصوت.
 - الاختصار الافتراضي **F3**، وتقدر تغيّره من **الإعدادات ← اختصارات الكيبورد**. الزر بيعرض الاختصار الحالي، والعملية قابلة للتراجع وتحترم قفل اللير وحدّ الفريمات.
 
 ## Smart selection edge refinement / تحسين حواف التحديد الذكي
