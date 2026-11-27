@@ -527,6 +527,158 @@ fn marker_strip_mesh(points: &[egui::Pos2], width: f32, color: egui::Color32) ->
     crate::fill_render::solid_polygon_mesh(&outline, color)
 }
 
+// Cache only immutable, document-space brush geometry. Screen position,
+// zoom, rotation, layer opacity and ink color are still applied on every draw.
+// Live strokes intentionally bypass this cache until committed.
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+use crate::brush_engine::{visit_round_marks, RoundMark};
+
+const GEOMETRY_CACHE_BYTES: usize = 24 * 1024 * 1024;
+const GEOMETRY_CACHE_ENTRIES: usize = 4096;
+const GEOMETRY_ENTRY_BYTES: usize = 512 * 1024;
+
+struct PreparedBrushGeometry {
+    marks: Vec<(RoundMark, f32)>,
+    lines: Vec<(u32, Vec<(f32, f32)>)>,
+}
+
+fn map_centerline<T>(stroke: &Stroke, width: f32, mut map: impl FnMut(f32, f32) -> T) -> Vec<T> {
+    if stroke.is_vector || stroke.brush_preset == KritaBrushPreset::Fineliner {
+        let mut path = crate::vector_path::vector_centerline(stroke);
+        if stroke.tip_shape == BrushTipShape::Square {
+            crate::vector_path::extend_square_caps(&mut path, width);
+        }
+        path.into_iter().map(|(x,y)| map(x,y)).collect()
+    } else if stroke.brush_preset == KritaBrushPreset::GPenInk {
+        crate::brush_engine::smooth_krita_2d_points(&stroke.points, width)
+            .into_iter().map(|p| map(p.x,p.y)).collect()
+    } else if stroke.brush_preset == KritaBrushPreset::SmoothInk {
+        crate::brush_engine::smooth_ink_points(&stroke.points, width)
+            .into_iter().map(|p| map(p.x,p.y)).collect()
+    } else {
+        crate::brush_engine::smooth_freehand_points(&stroke.points, width)
+            .into_iter().map(|p| map(p.x,p.y)).collect()
+    }
+}
+
+impl PreparedBrushGeometry {
+    fn new(stroke: &Stroke) -> Self {
+        let mut marks = Vec::new();
+        let mut lines = Vec::new();
+        visit_round_marks(stroke, |mark, flow| {
+            if let RoundMark::Line { width } = &mark {
+                let bits = width.to_bits();
+                if !lines.iter().any(|(key, _)| *key == bits) {
+                    lines.push((bits, map_centerline(stroke, *width, |x,y| (x,y))));
+                }
+            }
+            marks.push((mark, flow));
+        });
+        Self { marks, lines }
+    }
+
+    fn line(&self, width: f32) -> Option<&[(f32, f32)]> {
+        self.lines.iter().find(|(key, _)| *key == width.to_bits()).map(|(_, p)| p.as_slice())
+    }
+
+    fn estimated_bytes(&self, source: &Stroke) -> usize {
+        use std::mem::size_of;
+        512 + source.points.capacity() * size_of::<crate::project::StrokePoint>()
+            + source.brush_texture_id.as_ref().map_or(0, String::capacity)
+            + self.marks.capacity() * size_of::<(RoundMark, f32)>()
+            + self.marks.iter().map(|(m, _)| match m {
+                RoundMark::Outline(p) => p.capacity() * size_of::<(f32, f32)>(),
+                _ => 0,
+            }).sum::<usize>()
+            + self.lines.capacity() * size_of::<(u32, Vec<(f32, f32)>)>()
+            + self.lines.iter().map(|(_, p)| p.capacity() * size_of::<(f32, f32)>()).sum::<usize>()
+    }
+}
+
+fn geometry_hash(stroke: &Stroke) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    stroke.base_width.to_bits().hash(&mut h);
+    stroke.is_vector.hash(&mut h);
+    std::mem::discriminant(&stroke.brush_preset).hash(&mut h);
+    std::mem::discriminant(&stroke.tip_shape).hash(&mut h);
+    stroke.points.len().hash(&mut h);
+    for p in &stroke.points {
+        p.x.to_bits().hash(&mut h);
+        p.y.to_bits().hash(&mut h);
+        p.pressure.to_bits().hash(&mut h);
+    }
+    h.finish()
+}
+
+// Equality is checked after hashing, so a collision cannot substitute
+// unrelated artwork. Bit equality also preserves signed zero semantics.
+fn same_geometry(a: &Stroke, b: &Stroke) -> bool {
+    a.base_width.to_bits() == b.base_width.to_bits()
+        && a.is_vector == b.is_vector && a.brush_preset == b.brush_preset
+        && a.tip_shape == b.tip_shape && a.points.len() == b.points.len()
+        && a.points.iter().zip(&b.points).all(|(p, q)| {
+            p.x.to_bits() == q.x.to_bits() && p.y.to_bits() == q.y.to_bits()
+                && p.pressure.to_bits() == q.pressure.to_bits()
+        })
+}
+
+struct GeometryEntry {
+    source: Stroke,
+    prepared: Rc<PreparedBrushGeometry>,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct GeometryCache {
+    entries: HashMap<u64, GeometryEntry>,
+    order: VecDeque<u64>,
+    bytes: usize,
+}
+
+impl GeometryCache {
+    fn get(&mut self, stroke: &Stroke) -> Rc<PreparedBrushGeometry> {
+        let key = geometry_hash(stroke);
+        if let Some(entry) = self.entries.get(&key) {
+            if same_geometry(&entry.source, stroke) {
+                return Rc::clone(&entry.prepared);
+            }
+            // Rare collision: render normally, leave the existing entry intact.
+            return Rc::new(PreparedBrushGeometry::new(stroke));
+        }
+        let prepared = Rc::new(PreparedBrushGeometry::new(stroke));
+        let source = stroke.clone();
+        let bytes = prepared.estimated_bytes(&source);
+        if bytes > GEOMETRY_ENTRY_BYTES {
+            return prepared;
+        }
+        while self.entries.len() >= GEOMETRY_CACHE_ENTRIES || self.bytes + bytes > GEOMETRY_CACHE_BYTES {
+            let Some(old) = self.order.pop_front() else { break };
+            if let Some(entry) = self.entries.remove(&old) {
+                self.bytes -= entry.bytes;
+            }
+        }
+        self.entries.insert(key, GeometryEntry { source, prepared: Rc::clone(&prepared), bytes });
+        self.order.push_back(key);
+        self.bytes += bytes;
+        prepared
+    }
+}
+
+thread_local! {
+    static BRUSH_GEOMETRY_CACHE: RefCell<GeometryCache> = RefCell::new(GeometryCache::default());
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_stroke_cached<F: Fn(egui::Pos2) -> egui::Pos2>(
+    painter: &egui::Painter, stroke: &Stroke, override_color: Option<[u8; 4]>,
+    layer_opacity: f32, scale: f32, ox: f32, oy: f32, to_screen: &F,
+) {
+    draw_stroke_impl(painter, stroke, override_color, layer_opacity, scale, ox, oy, to_screen, true);
+}
+
 pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
     painter: &egui::Painter,
     stroke: &Stroke,
@@ -536,6 +688,14 @@ pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
     ox: f32,
     oy: f32,
     to_screen: &F,
+) {
+    draw_stroke_impl(painter, stroke, override_color, layer_opacity, scale, ox, oy, to_screen, false);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_stroke_impl<F: Fn(egui::Pos2) -> egui::Pos2>(
+    painter: &egui::Painter, stroke: &Stroke, override_color: Option<[u8; 4]>,
+    layer_opacity: f32, scale: f32, ox: f32, oy: f32, to_screen: &F, cache: bool,
 ) {
     if stroke.points.is_empty() {
         return;
@@ -600,10 +760,12 @@ pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
     // Raster tip shapes are handled by the shared continuous-stroke engine.
     // Never stamp square/triangle polygons repeatedly along the path.
 
-    use crate::brush_engine::{visit_round_marks, RoundMark};
+    let prepared = if cache && stroke.points.len() >= 2 && stroke.points.len() <= 4096 {
+        Some(BRUSH_GEOMETRY_CACHE.with(|cache| cache.borrow_mut().get(stroke)))
+    } else { None };
     let screen = |x,y| to_screen(egui::pos2(x+ox,y+oy));
     let mut screen_pts: Option<Vec<egui::Pos2>> = None;
-    visit_round_marks(stroke, |mark, flow| {
+    let mut paint = |mark: &RoundMark, flow: f32| {
         let ink = egui::Color32::from_rgba_unmultiplied(c[0],c[1],c[2], (eff_alpha as f32 * flow) as u8);
         let width = match mark {
             RoundMark::Dot(dab) => {
@@ -611,31 +773,20 @@ pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
                 return;
             }
             RoundMark::Outline(outline) => {
-                let path: Vec<_> = outline.into_iter().map(|(x,y)| screen(x,y)).collect();
+                let path: Vec<_> = outline.iter().map(|&(x,y)| screen(x,y)).collect();
                 if let Some(mesh) = crate::fill_render::solid_polygon_mesh(&path, ink) {
                     painter.add(egui::Shape::mesh(mesh));
                     return;
                 }
                 stroke.base_width
             }
-            RoundMark::Line { width } => width,
+            RoundMark::Line { width } => *width,
         };
         let project_points = || {
-            if stroke.is_vector || stroke.brush_preset == KritaBrushPreset::Fineliner {
-                let mut path = crate::vector_path::vector_centerline(stroke);
-                if stroke.tip_shape == BrushTipShape::Square {
-                    crate::vector_path::extend_square_caps(&mut path, width);
-                }
-                path.into_iter().map(|(x,y)| screen(x,y)).collect()
-            } else if stroke.brush_preset == KritaBrushPreset::GPenInk {
-                crate::brush_engine::smooth_krita_2d_points(&stroke.points,width)
-                    .into_iter().map(|p|screen(p.x,p.y)).collect()
-            } else if stroke.brush_preset == KritaBrushPreset::SmoothInk {
-                crate::brush_engine::smooth_ink_points(&stroke.points, width)
-                    .into_iter().map(|p| screen(p.x,p.y)).collect()
+            if let Some(points) = prepared.as_ref().and_then(|p| p.line(width)) {
+                points.iter().map(|&(x,y)| screen(x,y)).collect()
             } else {
-                crate::brush_engine::smooth_freehand_points(&stroke.points, width)
-                    .into_iter().map(|p| screen(p.x,p.y)).collect()
+                map_centerline(stroke, width, screen)
             }
         };
         let points = if flow == 1.0 {
@@ -715,7 +866,14 @@ pub fn draw_stroke_pro<F: Fn(egui::Pos2) -> egui::Pos2>(
                 painter.circle_filled(*last,radius,ink);
             }
         }
-    });
+    };
+    if let Some(prepared) = &prepared {
+        for (mark, flow) in &prepared.marks {
+            paint(mark, *flow);
+        }
+    } else {
+        visit_round_marks(stroke, |mark, flow| paint(&mark, flow));
+    }
 }
 
 #[cfg(test)]
@@ -735,6 +893,67 @@ mod viewport_tests {
             brush_texture_id: None,
             tip_shape: BrushTipShape::Round,
         }
+    }
+
+    #[test]
+    fn geometry_cache_reuses_geometry_but_not_changed_pressure_or_points() {
+        let mut cache = GeometryCache::default();
+        let mut s = stroke(&[(0.0,0.0), (20.0,15.0), (30.0,40.0)]);
+        let first = cache.get(&s);
+        assert!(Rc::ptr_eq(&first, &cache.get(&s)));
+        s.color = [100,20,30,150];
+        s.opacity = 0.3;
+        assert!(Rc::ptr_eq(&first, &cache.get(&s)));
+        s.points[1].pressure = 0.4;
+        assert!(!Rc::ptr_eq(&first, &cache.get(&s)));
+        s.points[1].x += 2.0;
+        let moved = cache.get(&s);
+        assert!(!Rc::ptr_eq(&first, &moved));
+        assert!(Rc::ptr_eq(&moved, &cache.get(&s)));
+        s.base_width += 1.0;
+        assert!(!Rc::ptr_eq(&moved, &cache.get(&s)));
+        assert!(cache.bytes <= GEOMETRY_CACHE_BYTES);
+    }
+
+    #[test]
+    fn cached_canvas_shapes_match_uncached_at_different_zoom_and_color() {
+        for (preset, vector, varied) in [
+            (KritaBrushPreset::GPenInk, false, false),
+            (KritaBrushPreset::GPenInk, false, true),
+            (KritaBrushPreset::Watercolor, false, false),
+            (KritaBrushPreset::SmoothInk, true, false),
+            (KritaBrushPreset::TaperedPen, false, true),
+        ] {
+            let mut s = stroke(&[(20.0,20.0),(45.0,27.0),(63.0,41.0),(82.0,60.0)]);
+            s.brush_preset = preset;
+            s.is_vector = vector;
+            if varied { s.points[1].pressure = 0.4; }
+            for (scale, color) in [(1.0,[10,20,30,255]), (1.5,[80,90,110,120])] {
+                let render = |cached: bool| {
+                    let ctx = egui::Context::default();
+                    let out = ctx.run(egui::RawInput::default(), |ctx| {
+                        let painter = ctx.layer_painter(egui::LayerId::background());
+                        let transform = |p: egui::Pos2| egui::pos2(p.x*scale+20.0,p.y*scale+10.0);
+                        draw_stroke_impl(&painter, &s, Some(color), 0.7, scale, 0.0, 0.0, &transform, cached);
+                    });
+                    format!("{:?}", out.shapes)
+                };
+                assert_eq!(render(false), render(true), "{preset:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn geometry_cache_has_a_hard_entry_budget() {
+        let mut cache = GeometryCache::default();
+        for i in 0..GEOMETRY_CACHE_ENTRIES + 32 {
+            let x = i as f32;
+            cache.get(&stroke(&[(x,0.0),(x+1.0,1.0)]));
+        }
+        assert!(cache.entries.len() <= GEOMETRY_CACHE_ENTRIES);
+        assert!(cache.bytes <= GEOMETRY_CACHE_BYTES);
+        assert_eq!(cache.order.len(), cache.entries.len());
+        assert_eq!(cache.bytes, cache.entries.values().map(|entry| entry.bytes).sum::<usize>());
     }
 
     #[test]

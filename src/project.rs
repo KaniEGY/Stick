@@ -710,13 +710,20 @@ impl Default for AniProject {
 
 impl AniProject {
     pub fn evaluate_layer_at_frame(&self, layer: &Layer, frame: usize) -> FrameData {
+        self.layer_frame_view(layer, frame).into_owned()
+    }
+
+    /// Borrow the actual drawing for a keyframe or hold. Only a genuine
+    /// interpolated tween needs an owned, freshly evaluated drawing.
+    pub fn layer_frame_view<'a>(&self, layer: &'a Layer, frame: usize) -> std::borrow::Cow<'a, FrameData> {
+        use std::borrow::Cow;
         let prev_k = match layer.keyframes.keys().filter(|&&k| k <= frame).max().copied() {
             Some(k) => k,
-            None => return FrameData::default(),
+            None => return Cow::Owned(FrameData::default()),
         };
         let prev_fd = match layer.keyframes.get(&prev_k) {
             Some(fd) => fd,
-            None => return FrameData::default(),
+            None => return Cow::Owned(FrameData::default()),
         };
 
         let effective_tween = if prev_fd.tween_mode != TweenMode::None {
@@ -728,7 +735,7 @@ impl AniProject {
         };
 
         if effective_tween == TweenMode::None || prev_k == frame {
-            return prev_fd.clone();
+            return Cow::Borrowed(prev_fd);
         }
 
         if let Some(&next_k) = layer.keyframes.keys().filter(|&&k| k > prev_k).min() {
@@ -804,11 +811,11 @@ impl AniProject {
                         evaluated.strokes = morphed_strokes;
                     }
 
-                    return evaluated;
+                    return Cow::Owned(evaluated);
                 }
             }
         }
-        prev_fd.clone()
+        Cow::Borrowed(prev_fd)
     }
 
     pub fn evaluate_symbol_strokes<'a>(&'a self, sym: &'a Symbol, global_frame: usize) -> &'a [Stroke] {
@@ -1239,5 +1246,41 @@ mod brush_tip_compat_tests {
         let serialized = serde_json::to_string(&stroke).unwrap();
         let opened: Stroke = serde_json::from_str(&serialized).unwrap();
         assert_eq!(opened.tip_shape, BrushTipShape::Pentagon);
+    }
+}
+
+#[cfg(test)]
+mod layer_frame_view_tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    #[test]
+    fn held_frames_borrow_the_authored_key_and_empty_frames_are_owned() {
+        let mut project = AniProject::default();
+        project.total_frames = 10;
+        let layer = &mut project.layers[0];
+        layer.keyframes.get_mut(&1).unwrap().label = "source".into();
+        let layer = &project.layers[0];
+        assert!(matches!(project.layer_frame_view(layer, 0), Cow::Owned(_)));
+        for frame in [1, 2, 10] {
+            let view = project.layer_frame_view(layer, frame);
+            assert!(matches!(&view, Cow::Borrowed(_)));
+            assert!(std::ptr::eq(view.as_ref(), &layer.keyframes[&1]));
+        }
+    }
+
+    #[test]
+    fn real_tweens_are_owned_but_endpoints_and_trailing_holds_are_borrowed() {
+        let mut project = AniProject::default();
+        project.total_frames = 10;
+        let layer = &mut project.layers[0];
+        layer.keyframes.get_mut(&1).unwrap().tween_mode = TweenMode::Classic;
+        layer.keyframes.insert(5, FrameData::default());
+        let layer = &project.layers[0];
+        assert!(matches!(project.layer_frame_view(layer, 1), Cow::Borrowed(_)));
+        assert!(matches!(project.layer_frame_view(layer, 3), Cow::Owned(_)));
+        assert!(matches!(project.layer_frame_view(layer, 5), Cow::Borrowed(_)));
+        assert!(matches!(project.layer_frame_view(layer, 8), Cow::Borrowed(_)));
+        assert_eq!(project.layer_frame_view(layer, 3).into_owned(), project.evaluate_layer_at_frame(layer, 3));
     }
 }
