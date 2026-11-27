@@ -1,5 +1,12 @@
 # Stick v4.1.1 — Update reliability, Vector Ink, Bucket and export fixes
 
+## Drawing Engine — geometry reuse / تسريع محرك الرسم
+
+- Reuse prepared brush centerlines and pressure geometry for finished strokes instead of recalculating them every canvas refresh. Live drawing retains its direct path; the current brush appearance, zoom, color, opacity and transform remain unchanged.
+- The geometry cache is bounded to an estimated 24 MiB and 4,096 entries; changed points, pressure, width and tip are re-evaluated. No additional external runtime or AI model is required.
+- Canvas and raster export borrow unchanged held frames rather than cloning their artwork repeatedly; interpolated tweens retain their original evaluation behavior.
+- تسريع إعادة عرض الفرش والفيكتور عن طريق إعادة استخدام هندسة الخطوط المحفوظة في الذاكرة، من غير تغيير شكل الفرش أو صيغة المشروع. الفريمات الممتدة لا تحتاج نسخ الرسومات أثناء العرض والتصدير.
+
 ## True frame holds and read-only timeline navigation / تمديد الفريم والتنقل
 
 - **F3** extends the exposure by one frame without copying the drawing or creating a keyframe. Changes to the source drawing appear across its held cells; F6 remains an independent keyframe command. Later keys on the active layer shift forward, with other layers and audio unchanged.
