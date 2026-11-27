@@ -165,7 +165,7 @@ pub fn render_frame_pixmap(project: &AniProject, frame_idx: usize, transparent_b
             continue;
         }
 
-        let fd = project.evaluate_layer_at_frame(layer, frame_idx);
+        let fd = project.layer_frame_view(layer, frame_idx);
         if layer.background.is_none() && fd.media_items.is_empty() && fd.strokes.is_empty()
             && fd.text_items.is_empty() && fd.symbol_instances.is_empty() {
             continue;
